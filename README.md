@@ -6,9 +6,9 @@ On August 27, 2017, Hurricane Harvey put more than 56,000 calls into Houston's 9
 
 Surge replays that night on the real city and asks what a dispatcher with a copilot could have done differently. It listens to each call, works out what is happening and exactly where, merges the duplicates, forecasts where the water is going from the terrain, and assigns every free crew to the incident where it saves the most lives, over roads that are actually still open.
 
-**Result:** across 20 simulated storms it never saw during tuning, the copilot cut expected deaths by about **BENCH_VS_CAD%** against a standard dispatch system, and by **BENCH_VS_ROUTED%** against a standard system that is also given live flood-aware routing. Same storm, same calls, same call-takers, same 137 units.
+**Result:** across 20 simulated storms it never saw during tuning, the copilot cut expected deaths by about **44%** against a standard dispatch system, and by **37%** against a standard system that is also given live flood-aware routing. Same storm, same calls, same call-takers, same 137 units.
 
-**Live demo:** open `dist/surge.html` in any browser (one self-contained file, no server, works offline), or the hosted copy linked from the repo description.
+**Live demo:** [claude.ai/artifact/F27WL1pVuTzd4vZFaqWvNj](https://claude.ai/artifact/F27WL1pVuTzd4vZFaqWvNj), or open `dist/surge.html` in any browser (one self-contained file, no server, works offline).
 
 ![Surge console](docs/console.png)
 
@@ -33,7 +33,7 @@ The storm timing, the individual calls and their wording are simulated. `data/fe
                                         flood model  assignment
 ```
 
-**Hear** (`src/triage.ts`). A transcript becomes a structured incident in about 0.1 ms with no network and no model download: incident type from a weighted phrase lexicon with negation handling ("he is *not* bleeding"), the street address resolved against real address points (house numbers spoken digit by digit, abbreviations, one-letter typos, range interpolation for numbers it has never seen), head count, vulnerability (infants, elderly, wheelchair users, oxygen and dialysis patients), reported water depth, and whether this is a repeat caller. Street names are removed before classification so "Hazard Street" cannot vote for an emergency. Every conclusion carries the words that produced it, which the console highlights. On 4,000+ simulated calls it gets the type right 99.4% of the time; on a set of hand-written calls it never saw during development it gets all of them (`test/core.test.ts`).
+**Hear** (`src/triage.ts`). A transcript becomes a structured incident in about 0.1 ms with no network and no model download: incident type from a weighted phrase lexicon with negation handling ("he is *not* bleeding"), the street address resolved against real address points (house numbers spoken digit by digit, abbreviations, one-letter typos, range interpolation for numbers it has never seen), head count, vulnerability (infants, elderly, wheelchair users, oxygen and dialysis patients), reported water depth, and whether this is a repeat caller. Street names are removed before classification so "Hazard Street" cannot vote for an emergency. Every conclusion carries the words that produced it, which the console highlights. On thousands of simulated calls it gets the type right 99.4% of the time; on a set of hand-written calls it never saw during development it gets all of them (`test/core.test.ts`).
 
 **Merge** (`src/dispatch.ts`). Repeat callers (same phone number), neighbors (same address) and callers with no address inside the same phone location fix become one incident. Each repeat call updates it with the worst news: the water is at our chest now.
 
@@ -47,14 +47,20 @@ The storm timing, the individual calls and their wording are simulated. `data/fe
 
 `npm run bench -- --seeds 20` runs every dispatcher on the same 20 storms (seeds 101 to 120, none used for tuning):
 
-BENCH_TABLE
+| Dispatcher | Expected deaths | Incidents reached | Life-threat median (min) | Life-threat p90 (min) | Never reached | Turned back by water | Repeat calls | Hung up on hold |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| First come, first served | 104.8 ± 7.0 | 260 | 22.3 | 128.6 | 106.1 | 294 | 582 | 679 |
+| Standard CAD | 100.2 ± 7.0 | 260 | 23.3 | 122.9 | 99.8 | 297 | 555 | 615 |
+| CAD + flood routing | 88.0 ± 7.5 | 279 | 22.8 | 111.5 | 91.2 | 2 | 472 | 477 |
+| Surge, no flood forecast | 65.7 ± 4.6 | 316 | 37.7 | 115.3 | 66.1 | 3 | 518 | 429 |
+| **Surge copilot** | 55.7 ± 4.4 | 322 | 24.1 | 74.3 | 56.0 | 3 | 361 | 183 |
 
 - **First come, first served** sends the closest free unit to each call in the order calls were answered.
 - **Standard CAD** is what a modern computer-aided dispatch system does: protocol priority, closest unit by straight-line distance, duplicates merged on matching address or phone number. Its call-takers code every call correctly and always get the address right when the caller says it, which is generous.
 - **CAD + flood routing** is the same, but picks units by drive time on the flooded network, so it knows which units can actually get there.
 - **Surge, no flood forecast** is the copilot with the terrain model switched off, to show what the forecast is worth on its own.
 
-Life-threat response time is from the first call to a unit arriving for trapped people, vehicles in water, cardiac arrests, fires and breathing emergencies. The copilot is not always faster to the median call: it deliberately reaches the people whose water is rising fastest first, which cuts the long tail and the deaths.
+Life-threat response time is from the first call to a unit arriving for trapped people, vehicles in water, cardiac arrests, fires and breathing emergencies. The copilot's median response is about the same as the baselines; the gain is in the long tail (p90 drops from 123 to 74 minutes) because it reaches the people whose water is rising fastest first. It also takes far fewer repeat calls and hang-ups, because people it has already rescued stop calling.
 
 ## Run it
 

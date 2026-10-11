@@ -1,0 +1,72 @@
+{
+ "seeds": 20,
+ "from": 101,
+ "units": 137,
+ "rows": [
+  {
+   "policy": "First come, first served",
+   "deaths": 104.75787312541186,
+   "ci": 7.011733544344442,
+   "reached": 259.55,
+   "p1Median": 22.296592802898367,
+   "p1P90": 128.5552707793204,
+   "p1Unreached": 106.1,
+   "turnedBack": 294.4,
+   "wasted": 13.8,
+   "repeat": 581.8,
+   "abandoned": 679.2
+  },
+  {
+   "policy": "Standard CAD",
+   "deaths": 100.15285757531198,
+   "ci": 7.034070844411944,
+   "reached": 260.15,
+   "p1Median": 23.300799106634923,
+   "p1P90": 122.9443130688949,
+   "p1Unreached": 99.85,
+   "turnedBack": 297.05,
+   "wasted": 13.7,
+   "repeat": 555.05,
+   "abandoned": 615.2
+  },
+  {
+   "policy": "CAD + flood routing",
+   "deaths": 88.01198774694913,
+   "ci": 7.46296437378365,
+   "reached": 279.05,
+   "p1Median": 22.839201327520005,
+   "p1P90": 111.5004911158763,
+   "p1Unreached": 91.25,
+   "turnedBack": 2.05,
+   "wasted": 14.5,
+   "repeat": 472.4,
+   "abandoned": 476.75
+  },
+  {
+   "policy": "Surge, no flood forecast",
+   "deaths": 65.65330955044463,
+   "ci": 4.587449045493014,
+   "reached": 315.85,
+   "p1Median": 37.735462264394656,
+   "p1P90": 115.32237324938981,
+   "p1Unreached": 66.1,
+   "turnedBack": 2.95,
+   "wasted": 16.85,
+   "repeat": 518.4,
+   "abandoned": 428.55
+  },
+  {
+   "policy": "Surge copilot",
+   "deaths": 55.69524675142145,
+   "ci": 4.36775408819167,
+   "reached": 322.1,
+   "p1Median": 24.118859306236715,
+   "p1P90": 74.31827713951414,
+   "p1Unreached": 56.05,
+   "turnedBack": 2.75,
+   "wasted": 14.15,
+   "repeat": 361.45,
+   "abandoned": 182.55
+  }
+ ]
+}
