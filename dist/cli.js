@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -330,7 +330,9 @@ var LEXICON = {
     R(/\b(rescued?|rescue us)\b/, 2.5),
     R(/\b(attic|roof|ceiling)\b/, 3),
     // flood context, which a medical call from a flooded house also has
-    R(/\bwater\b[^.]{0,30}\b(rising|coming in|inside|in the house|up to|deep|at (my|our))\b/, 1),
+    R(/\bwater\b[^.]{0,30}\b(rising|coming in|coming up|keeps|inside|in the house|up to|deep|at (my|our|the))\b/, 1),
+    R(/\b(can'?t|cannot) (get|lift|carry|move) (her|him|them|us)\b/, 2, false),
+    R(/\bupstairs|second floor\b/, 1),
     R(/\bflood(ing|ed)?\b/, 0.5),
     R(/\bknee deep|waist deep|chest deep\b/, 1)
   ],
@@ -354,7 +356,13 @@ var LEXICON = {
   injury: [R(/\b(fell|fall|fallen)\b/, 2.5), R(/\bbroken|broke\b/, 2), R(/\bbleeding|blood\b/, 2.5), R(/\bcut (his|her|my)\b/, 2), R(/\bhit (his|her|my) head\b/, 2)],
   fire: [R(/\bon fire\b|\bfire\b/, 4), R(/\bsmoke\b/, 2.5), R(/\bflames?|burning|sparks\b/, 2.5)],
   gas_leak: [R(/\bsmell(s|ing)? (like )?gas\b|\bgas leak\b/, 5), R(/\brotten eggs\b/, 2)],
-  crime: [R(/\bbreak(ing)? in(to)?\b|\bbreak into\b/, 4), R(/\bloot\w*\b/, 4), R(/\bgun|shot|shooting|robb\w*|threatening\b/, 4)],
+  crime: [
+    R(/\bbreak(ing)? in(to)?\b|\bbreak into\b|\bbroke in\b/, 4),
+    R(/\b(trying to|tried to) (get|break|come) in\b|\bintruder\b|\bsomeone (is )?in (my|the) house\b/, 4),
+    R(/\b(smashed|broke|breaking) (the |a |my )?(window|door)\b/, 3),
+    R(/\bloot\w*\b/, 4),
+    R(/\bgun|shot|shooting|robb\w*|threatening|stabbed\b/, 4)
+  ],
   welfare: [R(/\bcheck on\b/, 3.5), R(/\bcan'?t reach\b|\bhaven'?t heard from\b|\bnot answering|isn'?t answering\b/, 3, false)],
   info: [
     R(/\bshelter\b/, 2.5),
@@ -477,6 +485,7 @@ var Triager = class {
         }
       });
     }
+    address = address;
     if (address) evidence.push({ text: addressText, label: interpolated ? "address interpolated on street" : "address matched", kind: "where" });
     let body = spoken;
     if (address) {
@@ -513,7 +522,7 @@ var Triager = class {
     };
     who(/\b(baby|newborn|infant|\d+ months? old|toddler)\b/, "infant", "infant");
     who(/\b(elderly|grandmother|grandfather|grandma|grandpa|(is|he'?s|she'?s|dad is|mother is|mom is) ([7-9]\d|1[01]\d)\b|([7-9]\d) years old)/, "elderly", "elderly");
-    who(/\b(wheelchair|can'?t walk|cannot walk|bedridden|disabled|walker)\b/, "mobility", "cannot walk");
+    who(/\b(wheelchair|can'?t walk|cannot walk|bedridden|disabled|walker|can'?t (lift|carry|move) (her|him))\b/, "mobility", "cannot walk");
     who(/\b(oxygen|dialysis|pregnant|insulin|diabetic|ventilator)\b/, "medical", "medically dependent");
     const people = countPeople(body);
     if (people > 1) typeEvidence.push({ text: `${people} people`, label: "head count", kind: "who" });
@@ -649,9 +658,11 @@ function closestUnitPolicy(name, order, byDriveTime = false) {
       for (const cad of waiting) {
         let best = -1;
         let bd = Infinity;
+        const times = /* @__PURE__ */ new Map();
         for (const u of idle) {
           if (taken.has(u.id) || !CAN_SERVE[cad.type].includes(u.kind) || cad.blocked.includes(u.vehicle)) continue;
-          const d = byDriveTime ? sim.timesTo(cad.node, u.vehicle, now)[u.node] : Math.hypot(sim.city.nx[u.node] - cad.x, sim.city.ny[u.node] - cad.y);
+          if (byDriveTime && !times.has(u.vehicle)) times.set(u.vehicle, sim.timesTo(cad.node, u.vehicle, now));
+          const d = byDriveTime ? times.get(u.vehicle)[u.node] : Math.hypot(sim.city.nx[u.node] - cad.x, sim.city.ny[u.node] - cad.y);
           if (d < bd) {
             bd = d;
             best = u.id;
@@ -699,7 +710,7 @@ function surgePolicy(city, opts = {}) {
       const loc = tr.address ? { x: tr.address.x, y: tr.address.y, node: tr.address.node } : locate(sim, call.aliX, call.aliY);
       dirty = true;
       const open = sim.openCads();
-      const dup = open.find((c) => c.calls.some((k) => sim.scenario.calls[k].phone === call.phone)) ?? (tr.address ? open.find((c) => c.addressId === tr.address.id) : void 0) ?? (!tr.address && !call.thirdParty ? open.find((c) => c.type === tr.type && Math.hypot(c.x - call.aliX, c.y - call.aliY) < call.aliR + 100 && now - c.opened < 120) : void 0);
+      const dup = open.find((c) => c.calls.some((k) => sim.scenario.calls[k].phone === call.phone)) ?? (tr.address ? open.find((c) => tr.address.id >= 0 && c.addressId === tr.address.id || Math.hypot(c.x - tr.address.x, c.y - tr.address.y) < 25) : void 0) ?? (!tr.address && !call.thirdParty ? open.find((c) => c.type === tr.type && Math.hypot(c.x - call.aliX, c.y - call.aliY) < call.aliR + 100 && now - c.opened < 120) : void 0);
       if (dup) {
         sim.mergeCad(call, dup);
         if (tr.reportedDepth !== null) dup.reportedDepth = Math.max(dup.reportedDepth ?? 0, tr.reportedDepth);
@@ -709,7 +720,7 @@ function surgePolicy(city, opts = {}) {
           dup.acuity = tr.acuity;
           if (dup.status === "waiting") dup.type = tr.type;
         }
-        if (!dup.addressId && tr.address) Object.assign(dup, { addressId: tr.address.id, ...loc });
+        if (dup.addressId === null && tr.address) Object.assign(dup, { addressId: tr.address.id, ...loc });
         return;
       }
       const cad = sim.openCad(call, now, {
@@ -1284,8 +1295,8 @@ var BACKGROUND_MIX = [
   ["welfare", 9],
   ["info", 30]
 ];
-var RESCUE_SHARE = 0.08;
-var VEHICLE_SHARE = 0.025;
+var RESCUE_SHARE = 0.028;
+var VEHICLE_SHARE = 9e-3;
 function makeScenario(city, flood, opts) {
   const minutes = opts.minutes ?? 360;
   const intensity = opts.intensity ?? 1;
@@ -1324,7 +1335,7 @@ function makeScenario(city, flood, opts) {
   incidents.sort((a, b) => a.t0 - b.t0);
   incidents.forEach((inc, i) => inc.id = i);
   const calls2 = makeCalls(city, flood, incidents, minutes, new Rng(deriveSeed(opts.seed, 2)));
-  return { seed: opts.seed, minutes, callTakers: opts.callTakers ?? 16, incidents, calls: calls2 };
+  return { seed: opts.seed, minutes, callTakers: opts.callTakers ?? 8, incidents, calls: calls2 };
 }
 function household(rng) {
   let n = 1;
@@ -1713,7 +1724,7 @@ function defaultFleet(city, opts = {}) {
 var HELP = `surge - a 911 dispatch copilot for disaster call surges (Houston, Hurricane Harvey night)
 
 usage:
-  surge bench [--seeds 10] [--from 101] [--intensity 1]   compare dispatch policies over many simulated storms
+  surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms
   surge triage "<what the caller said>"                    triage one call against real Houston addresses
   surge calls [--seed 1] [--n 12]                          print sample calls from a scenario
 `;
@@ -1771,7 +1782,8 @@ function bench() {
     ["P1 never reached", (m) => m.p1Unreached, 1],
     ["turned back", (m) => m.turnedBack, 0],
     ["wasted trips", (m) => m.duplicateTrips + m.wrongLocationTrips, 1],
-    ["repeat calls", (m) => m.repeatCalls, 0]
+    ["repeat calls", (m) => m.repeatCalls, 0],
+    ["hung up on hold", (m) => m.callsAbandoned, 0]
   ];
   console.log(`
 mean over ${seeds} storms (95% CI for deaths)`);
@@ -1786,8 +1798,32 @@ mean over ${seeds} storms (95% CI for deaths)`);
     console.log([name.padEnd(26), ...cells].join(""));
   }
   const surge = mean(rows.get("Surge copilot").map((m) => m.deaths));
+  const routed = mean(rows.get("CAD + flood routing").map((m) => m.deaths));
   console.log(`
-Surge copilot vs standard CAD: ${(100 * (1 - surge / base)).toFixed(0)}% fewer deaths`);
+Surge copilot vs standard CAD: ${(100 * (1 - surge / base)).toFixed(0)}% fewer deaths; vs CAD + flood routing: ${(100 * (1 - surge / routed)).toFixed(0)}% fewer`);
+  const out = process.argv.indexOf("--json");
+  if (out > 0) {
+    const summary = {
+      seeds,
+      from,
+      units: fleet.length,
+      rows: [...rows].map(([policy, ms]) => ({
+        policy,
+        deaths: mean(ms.map((m) => m.deaths)),
+        ci: ci(ms.map((m) => m.deaths)),
+        reached: mean(ms.map((m) => m.incidentsServed)),
+        p1Median: mean(ms.map((m) => m.p1ResponseMedian)),
+        p1P90: mean(ms.map((m) => m.p1ResponseP90)),
+        p1Unreached: mean(ms.map((m) => m.p1Unreached)),
+        turnedBack: mean(ms.map((m) => m.turnedBack)),
+        wasted: mean(ms.map((m) => m.duplicateTrips + m.wrongLocationTrips)),
+        repeat: mean(ms.map((m) => m.repeatCalls)),
+        abandoned: mean(ms.map((m) => m.callsAbandoned))
+      }))
+    };
+    writeFileSync(process.argv[out + 1], JSON.stringify(summary, null, 1));
+    console.log(`wrote ${process.argv[out + 1]}`);
+  }
 }
 function triage() {
   const text = process.argv.slice(3).join(" ");

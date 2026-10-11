@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { City, type CityData } from './city';
@@ -13,7 +13,7 @@ import { TYPE_LABEL } from './types';
 const HELP = `surge - a 911 dispatch copilot for disaster call surges (Houston, Hurricane Harvey night)
 
 usage:
-  surge bench [--seeds 10] [--from 101] [--intensity 1]   compare dispatch policies over many simulated storms
+  surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms
   surge triage "<what the caller said>"                    triage one call against real Houston addresses
   surge calls [--seed 1] [--n 12]                          print sample calls from a scenario
 `;
@@ -75,6 +75,7 @@ function bench(): void {
     ['turned back', (m) => m.turnedBack, 0],
     ['wasted trips', (m) => m.duplicateTrips + m.wrongLocationTrips, 1],
     ['repeat calls', (m) => m.repeatCalls, 0],
+    ['hung up on hold', (m) => m.callsAbandoned, 0],
   ];
   console.log(`\nmean over ${seeds} storms (95% CI for deaths)`);
   console.log(['policy'.padEnd(26), ...cols.map(([h]) => h.padStart(16))].join(''));
@@ -88,7 +89,31 @@ function bench(): void {
     console.log([name.padEnd(26), ...cells].join(''));
   }
   const surge = mean(rows.get('Surge copilot')!.map((m) => m.deaths));
-  console.log(`\nSurge copilot vs standard CAD: ${(100 * (1 - surge / base)).toFixed(0)}% fewer deaths`);
+  const routed = mean(rows.get('CAD + flood routing')!.map((m) => m.deaths));
+  console.log(`\nSurge copilot vs standard CAD: ${(100 * (1 - surge / base)).toFixed(0)}% fewer deaths; vs CAD + flood routing: ${(100 * (1 - surge / routed)).toFixed(0)}% fewer`);
+  const out = process.argv.indexOf('--json');
+  if (out > 0) {
+    const summary = {
+      seeds,
+      from,
+      units: fleet.length,
+      rows: [...rows].map(([policy, ms]) => ({
+        policy,
+        deaths: mean(ms.map((m) => m.deaths)),
+        ci: ci(ms.map((m) => m.deaths)),
+        reached: mean(ms.map((m) => m.incidentsServed)),
+        p1Median: mean(ms.map((m) => m.p1ResponseMedian)),
+        p1P90: mean(ms.map((m) => m.p1ResponseP90)),
+        p1Unreached: mean(ms.map((m) => m.p1Unreached)),
+        turnedBack: mean(ms.map((m) => m.turnedBack)),
+        wasted: mean(ms.map((m) => m.duplicateTrips + m.wrongLocationTrips)),
+        repeat: mean(ms.map((m) => m.repeatCalls)),
+        abandoned: mean(ms.map((m) => m.callsAbandoned)),
+      })),
+    };
+    writeFileSync(process.argv[out + 1], JSON.stringify(summary, null, 1));
+    console.log(`wrote ${process.argv[out + 1]}`);
+  }
 }
 
 function triage(): void {

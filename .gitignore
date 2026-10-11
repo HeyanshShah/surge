@@ -1,3 +1,4 @@
 node_modules/
 data/raw/
-dist/.tmp*
+dist/.replay.mjs
+dist/artifact.html

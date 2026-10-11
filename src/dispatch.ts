@@ -65,9 +65,11 @@ function closestUnitPolicy(name: string, order: (a: Cad, b: Cad) => number, byDr
       for (const cad of waiting) {
         let best = -1;
         let bd = Infinity;
+        const times = new Map<string, Float32Array>();
         for (const u of idle) {
           if (taken.has(u.id) || !CAN_SERVE[cad.type].includes(u.kind) || cad.blocked.includes(u.vehicle)) continue;
-          const d = byDriveTime ? sim.timesTo(cad.node, u.vehicle, now)[u.node] : Math.hypot(sim.city.nx[u.node] - cad.x, sim.city.ny[u.node] - cad.y);
+          if (byDriveTime && !times.has(u.vehicle)) times.set(u.vehicle, sim.timesTo(cad.node, u.vehicle, now));
+          const d = byDriveTime ? times.get(u.vehicle)![u.node] : Math.hypot(sim.city.nx[u.node] - cad.x, sim.city.ny[u.node] - cad.y);
           if (d < bd) {
             bd = d;
             best = u.id;

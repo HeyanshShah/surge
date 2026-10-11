@@ -1,0 +1,128 @@
+<title>Surge Dispatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>/*STYLE*/</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <div>
+        <div class="name">SURGE</div>
+        <div class="sub">911 dispatch copilot · Houston · Hurricane Harvey</div>
+      </div>
+    </div>
+    <div class="clockbox">
+      <div class="date" id="date">Sat Aug 26 2017</div>
+      <div class="clock" id="clock">22:00</div>
+    </div>
+    <div class="gauge" title="Water level in the bayous above their normal bed">
+      <div class="glabel">Bayou rise</div>
+      <div class="gval"><span id="stage">+0.8</span> m</div>
+      <div class="gtrack"><div class="gfill" id="stagefill"></div></div>
+    </div>
+    <div class="policy" role="tablist" aria-label="Which dispatcher the map shows">
+      <button id="pol-surge" class="on" role="tab" aria-selected="true">Surge copilot</button>
+      <button id="pol-cad" role="tab" aria-selected="false">Standard CAD</button>
+    </div>
+  </header>
+
+  <section class="kpis" aria-label="Copilot versus standard dispatch, live">
+    <div class="kpi" id="k-deaths">
+      <div class="klabel">Expected deaths so far</div>
+      <div class="kvals"><span class="ks">0.0</span><span class="kc">0.0</span></div>
+      <div class="kdelta"></div>
+    </div>
+    <div class="kpi" id="k-reached">
+      <div class="klabel">People reached</div>
+      <div class="kvals"><span class="ks">0</span><span class="kc">0</span></div>
+      <div class="kdelta"></div>
+    </div>
+    <div class="kpi" id="k-waiting">
+      <div class="klabel">Incidents waiting for a unit</div>
+      <div class="kvals"><span class="ks">0</span><span class="kc">0</span></div>
+      <div class="kdelta"></div>
+    </div>
+    <div class="kpi" id="k-hold">
+      <div class="klabel">Callers on hold</div>
+      <div class="kvals"><span class="ks">0</span><span class="kc">0</span></div>
+      <div class="kdelta"></div>
+    </div>
+    <div class="legend-k"><span class="sw s"></span>Surge copilot <span class="sw c"></span>Standard CAD</div>
+  </section>
+
+  <main class="work">
+    <div class="mapwrap">
+      <canvas id="map" aria-label="Map of central Houston with floodwater, emergencies and units"></canvas>
+      <div class="maplegend">
+        <span><i class="li a1"></i>Life threat</span>
+        <span><i class="li a2"></i>Urgent</span>
+        <span><i class="li a3"></i>Routine</span>
+        <span><i class="lu boat"></i>Boat</span>
+        <span><i class="lu engine"></i>Engine</span>
+        <span><i class="lu medic"></i>Medic</span>
+        <span><i class="lu police"></i>Patrol</span>
+        <span><i class="lf"></i>Floodwater</span>
+      </div>
+      <div class="mapbtns">
+        <button id="zin" aria-label="Zoom in">+</button>
+        <button id="zout" aria-label="Zoom out">−</button>
+        <button id="zfit" aria-label="Show whole area">⤢</button>
+      </div>
+      <div class="loading" id="loading">Loading Houston…</div>
+    </div>
+
+    <aside class="side">
+      <nav class="tabs" role="tablist">
+        <button id="tab-feed" class="on" role="tab">Live calls</button>
+        <button id="tab-inc" role="tab">Incident</button>
+        <button id="tab-take" role="tab">Take a call</button>
+      </nav>
+      <div class="pane" id="pane-feed"><ol class="feed" id="feed"></ol></div>
+      <div class="pane" id="pane-inc" hidden><div id="incident" class="incident"><p class="hint">Tap any emergency on the map to see its calls, what the copilot understood, and where the water is going.</p></div></div>
+      <div class="pane" id="pane-take" hidden>
+        <label for="calltext" class="flabel">Type what a caller says. The copilot triages it against 20,000 real Houston addresses.</label>
+        <textarea id="calltext" rows="5">please help my dad is 84 and in a wheelchair, water is coming in the house, we are at 5423 braesvalley drive</textarea>
+        <div class="examples" id="examples"></div>
+        <button id="triage" class="primary">Triage this call</button>
+        <div id="takeout"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="timeline">
+    <button id="play" class="play" aria-label="Play">▶</button>
+    <label class="speed" for="speed">Speed
+      <select id="speed">
+        <option value="2">2 min/s</option>
+        <option value="5" selected>5 min/s</option>
+        <option value="10">10 min/s</option>
+        <option value="20">20 min/s</option>
+      </select>
+    </label>
+    <div class="tl"><canvas id="tl" aria-label="Timeline of the night"></canvas><input id="scrub" type="range" min="0" max="360" step="0.5" value="0" aria-label="Time"></div>
+    <button id="newstorm" class="ghost">Simulate another storm</button>
+  </footer>
+</div>
+
+<section class="about">
+  <div class="about-in">
+    <h2>What you are looking at</h2>
+    <p class="lede">On the night of August 26, 2017, Houston's 911 system took more than 56,000 calls in 17 hours, against a normal 8,000 a day. Callers waited on hold, hung up and called again, and many of the calls were about people already rescued or people a dispatcher could not reach. Surge replays that night on the real city and asks what a dispatcher with a copilot could have done differently.</p>
+    <div class="pipeline">
+      <div class="step"><h3>Hear</h3><p>Each call's words become a structured incident: what is happening, the exact street address (spoken digit by digit, misspelled or abbreviated), who is inside, and how deep the water is. Every conclusion points back to the words that produced it.</p></div>
+      <div class="step"><h3>Merge</h3><p>Repeat callers, neighbors and relatives across town reporting the same family become one incident instead of five, using phone number, address and location fix.</p></div>
+      <div class="step"><h3>Forecast</h3><p>A terrain flood model (height above nearest drainage, from USGS-derived elevation and the real bayou network) predicts when the water at each address reaches waist and chest height, and which roads close to each vehicle.</p></div>
+      <div class="step"><h3>Assign</h3><p>Every few minutes the copilot solves an optimal assignment of free units to waiting incidents, weighing lives saved now against later on actual drive times over the flooded road network.</p></div>
+    </div>
+    <h2>Benchmark</h2>
+    <p>Same storm, same calls, same call-takers and same <span id="bunits">137</span> units for every dispatcher. Averaged over <span id="bseeds">20</span> storms the copilot never saw while it was being tuned.</p>
+    <div class="tablewrap"><table id="bench"></table></div>
+    <h2>Data</h2>
+    <ul class="sources" id="sources"></ul>
+    <p class="fine">The storm timing, the calls and their wording are simulated; the city is real. The risk model is deliberately simple and is the same model the copilot uses to plan, so read the benchmark as a comparison of dispatch strategies, not a forecast of deaths. This is a research prototype, not a medical or emergency tool.</p>
+  </div>
+</section>
+
+<script>/*SCRIPT*/</script>

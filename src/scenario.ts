@@ -85,7 +85,7 @@ export function makeScenario(city: City, flood: FloodModel, opts: ScenarioOption
   incidents.forEach((inc, i) => (inc.id = i));
 
   const calls = makeCalls(city, flood, incidents, minutes, new Rng(deriveSeed(opts.seed, 2)));
-  return { seed: opts.seed, minutes, callTakers: opts.callTakers ?? 16, incidents, calls };
+  return { seed: opts.seed, minutes, callTakers: opts.callTakers ?? 8, incidents, calls };
 }
 
 function household(rng: Rng): number {

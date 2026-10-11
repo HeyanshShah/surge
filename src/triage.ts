@@ -215,6 +215,8 @@ export class Triager {
         }
       });
     }
+    // (assigned inside callbacks above, which TypeScript's narrowing cannot see)
+    address = address as Address | null;
     if (address) evidence.push({ text: addressText!, label: interpolated ? 'address interpolated on street' : 'address matched', kind: 'where' });
 
     // strip the street name so "Hazard Street" or "Firethorn Drive" cannot vote for an incident type

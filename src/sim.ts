@@ -122,7 +122,7 @@ export class Sim {
   readonly firstCall: Float64Array;
   now = 0;
   private nextRing = 0;
-  private hold: { call: number; since: number; patience: number; tries: number }[] = [];
+  hold: { call: number; since: number; patience: number; tries: number }[] = [];
   private redial: { call: number; at: number; tries: number }[] = [];
   private takers: { call: number; until: number }[];
   private events: { t: number; unit: number; kind: 'arrive' | 'free' }[] = [];
