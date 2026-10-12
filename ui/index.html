@@ -4,31 +4,43 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>/*STYLE*/</style>
 
-<div class="app">
+<div class="app" id="app">
   <header class="bar">
     <div class="brand">
       <span class="mark" aria-hidden="true"></span>
       <div>
         <div class="name">SURGE</div>
-        <div class="sub">911 dispatch copilot · Houston · Hurricane Harvey</div>
+        <div class="sub" id="sub">911 dispatch copilot · Houston · Hurricane Harvey</div>
       </div>
+    </div>
+    <div class="policy mode" role="tablist" aria-label="Mode" id="modebox">
+      <button id="mode-replay" class="on" role="tab" aria-selected="true">Harvey replay</button>
+      <button id="mode-live" role="tab" aria-selected="false"><span class="dot"></span>Live</button>
     </div>
     <div class="clockbox">
       <div class="date" id="date">Sat Aug 26 2017</div>
       <div class="clock" id="clock">22:00</div>
     </div>
-    <div class="gauge" title="Water level in the bayous above their normal bed">
-      <div class="glabel">Bayou rise</div>
+    <div class="gauge" title="Water level in the channels above their normal level">
+      <div class="glabel" id="glabel">Bayou rise</div>
       <div class="gval"><span id="stage">+0.8</span> m</div>
       <div class="gtrack"><div class="gfill" id="stagefill"></div></div>
     </div>
-    <div class="policy" role="tablist" aria-label="Which dispatcher the map shows">
+    <div class="policy replay-only" role="tablist" aria-label="Which dispatcher the map shows">
       <button id="pol-surge" class="on" role="tab" aria-selected="true">Surge copilot</button>
       <button id="pol-cad" role="tab" aria-selected="false">Standard CAD</button>
     </div>
   </header>
 
-  <section class="kpis" aria-label="Copilot versus standard dispatch, live">
+  <section class="kpis live-only" aria-label="Flood outlook">
+    <div class="kpi" id="lk-car"><div class="klabel">Roads closed to cars</div><div class="kvals"><span class="ks">0</span><span class="kc"></span></div><div class="kdelta"></div></div>
+    <div class="kpi" id="lk-hw"><div class="klabel">Closed to high-water trucks</div><div class="kvals"><span class="ks">0</span><span class="kc"></span></div><div class="kdelta"></div></div>
+    <div class="kpi" id="lk-addr"><div class="klabel">Addresses in 0.3 m+ water</div><div class="kvals"><span class="ks">0</span><span class="kc"></span></div><div class="kdelta"></div></div>
+    <div class="kpi" id="lk-sta"><div class="klabel">Stations cut off</div><div class="kvals"><span class="ks">0</span><span class="kc"></span></div><div class="kdelta"></div></div>
+    <div class="legend-k"><span class="sw closed"></span>Closed to cars <span class="sw boats"></span>Stage boats</div>
+  </section>
+
+  <section class="kpis replay-only" aria-label="Copilot versus standard dispatch, live">
     <div class="kpi" id="k-deaths">
       <div class="klabel">Expected deaths so far</div>
       <div class="kvals"><span class="ks">0.0</span><span class="kc">0.0</span></div>
@@ -64,26 +76,32 @@
         <span><i class="lu medic"></i>Medic</span>
         <span><i class="lu police"></i>Patrol</span>
         <span><i class="lf"></i>Floodwater</span>
+        <span class="live-only"><i class="lg"></i>River gauge</span>
       </div>
       <div class="mapbtns">
         <button id="zin" aria-label="Zoom in">+</button>
         <button id="zout" aria-label="Zoom out">−</button>
         <button id="zfit" aria-label="Show whole area">⤢</button>
       </div>
-      <div class="loading" id="loading">Loading Houston…</div>
+      <div class="loading" id="loading">Loading the city…</div>
     </div>
 
     <aside class="side">
       <nav class="tabs" role="tablist">
-        <button id="tab-feed" class="on" role="tab">Live calls</button>
-        <button id="tab-inc" role="tab">Incident</button>
+        <button id="tab-feed" class="on replay-only" role="tab">Calls</button>
+        <button id="tab-inc" class="replay-only" role="tab">Incident</button>
+        <button id="tab-gauges" class="live-only" role="tab">Gauges</button>
+        <button id="tab-dispatch" class="live-only" role="tab">Dispatch</button>
         <button id="tab-take" role="tab">Take a call</button>
       </nav>
       <div class="pane" id="pane-feed"><ol class="feed" id="feed"></ol></div>
       <div class="pane" id="pane-inc" hidden><div id="incident" class="incident"><p class="hint">Tap any emergency on the map to see its calls, what the copilot understood, and where the water is going.</p></div></div>
+      <div class="pane" id="pane-gauges" hidden><ol class="feed" id="lv-gauges"><li class="hint">Reading river gauges…</li></ol></div>
+      <div class="pane" id="pane-dispatch" hidden><div id="lv-dispatch" class="lvd"></div></div>
       <div class="pane" id="pane-take" hidden>
-        <label for="calltext" class="flabel">Type what a caller says. The copilot triages it against 20,000 real Houston addresses.</label>
+        <label for="calltext" class="flabel" id="takelabel">Type what a caller says. The copilot triages it against 20,000 real Houston addresses.</label>
         <textarea id="calltext" rows="5">please help my dad is 84 and in a wheelchair, water is coming in the house, we are at 5423 braesvalley drive</textarea>
+        <input id="callphone" class="live-only phone" placeholder="Caller's phone (optional, merges repeat calls)" autocomplete="off">
         <div class="examples" id="examples"></div>
         <button id="triage" class="primary">Triage this call</button>
         <div id="takeout"></div>
@@ -91,7 +109,36 @@
     </aside>
   </main>
 
-  <footer class="timeline">
+  <footer class="timeline live-only">
+    <div class="lvlabel">Outlook<b id="lv-ahead">Now</b></div>
+    <div class="tl lvtl"><input id="lv-scrub" type="range" min="0" max="2880" step="15" value="0" aria-label="Hours ahead"><div class="ticks"><span>now</span><span>+12 h</span><span>+24 h</span><span>+36 h</span><span>+48 h</span></div></div>
+    <label class="speed" id="lv-whatif-wrap">What if
+      <select id="lv-whatif">
+        <option value="0" selected>as forecast</option>
+        <option value="0.5">+0.5 m</option>
+        <option value="1">+1 m</option>
+        <option value="2">+2 m</option>
+        <option value="3">+3 m</option>
+      </select>
+    </label>
+    <label class="speed" id="lv-scen-wrap" hidden>Scenario
+      <select id="lv-rise">
+        <option value="1">+1 m</option>
+        <option value="2">+2 m</option>
+        <option value="3" selected>+3 m</option>
+        <option value="4">+4 m</option>
+        <option value="5">+5 m</option>
+      </select>
+      <select id="lv-hours">
+        <option value="6">over 6 h</option>
+        <option value="12" selected>over 12 h</option>
+        <option value="24">over 24 h</option>
+      </select>
+    </label>
+    <span class="chip" id="lv-source">Reading river gauges…</span>
+  </footer>
+
+  <footer class="timeline replay-only">
     <button id="play" class="play" aria-label="Play">▶</button>
     <label class="speed" for="speed">Speed
       <select id="speed">
@@ -116,9 +163,13 @@
       <div class="step"><h3>Forecast</h3><p>A terrain flood model (height above nearest drainage, from USGS-derived elevation and the real bayou network) predicts when the water at each address reaches waist and chest height, and which roads close to each vehicle.</p></div>
       <div class="step"><h3>Assign</h3><p>Every few minutes the copilot solves an optimal assignment of free units to waiting incidents, weighing lives saved now against later on actual drive times over the flooded road network.</p></div>
     </div>
+    <h2>Live mode</h2>
+    <p>The same engine runs on today's water. Live mode reads every USGS stream gauge in the city (updated every 5 to 15 minutes) and the National Weather Service's official river forecasts, and drives the terrain model one bayou at a time: each channel follows the nearest gauge on its own stream. Slide the outlook forward to see which roads close to cars and trucks, which addresses go under, which stations get cut off, and where water reaches chest height first so boats can be staged there before the calls start. Log a real call and the copilot recommends a unit over the roads as they are. <code>surge serve</code> runs the same console for a whole dispatch floor with a JSON API for call intake, and <code>data/fetch.sh</code> builds any US city from open data.</p>
+    <div id="benchsec">
     <h2>Benchmark</h2>
     <p>Same storm, same calls, same call-takers and same <span id="bunits">137</span> units for every dispatcher. Averaged over <span id="bseeds">20</span> storms the copilot never saw while it was being tuned.</p>
     <div class="tablewrap"><table id="bench"></table></div>
+    </div>
     <h2>Data</h2>
     <ul class="sources" id="sources"></ul>
     <p class="fine">The storm timing, the calls and their wording are simulated; the city is real. The risk model is deliberately simple and is the same model the copilot uses to plan, so read the benchmark as a comparison of dispatch strategies, not a forecast of deaths. This is a research prototype, not a medical or emergency tool.</p>

@@ -1,6 +1,7 @@
 """Turn the raw real-world inputs in data/raw/ into the compact city model the simulator loads.
 
-Output: data/houston.json
+usage: python3 data/build.py [--name "Austin, TX (central)" --bbox=-97.80,30.22,-97.68,30.33 --raw data/raw-austin --out data/austin.json]
+Output: data/houston.json by default
   road graph      Overture transportation segments split at connectors, largest connected component
   stations        real Houston-area fire stations, police stations and emergency departments (Overture places)
   addresses       a seeded sample of real street addresses, snapped to the road graph (Overture addresses)
@@ -8,6 +9,7 @@ Output: data/houston.json
   drainage        cells touched by bayous, streams and drainage channels (Overture water), used for HAND flood mapping
 All coordinates are local meters (x east, y north) around ORIGIN.
 """
+import argparse
 import base64
 import collections
 import json
@@ -22,14 +24,23 @@ import shapely
 from PIL import Image
 from shapely.ops import substring
 
-RAW = Path(__file__).parent / "raw"
-OUT = Path(__file__).parent / "houston.json"
-W, S, E, N = -95.56, 29.62, -95.30, 29.82
+ap = argparse.ArgumentParser(description="Build a Surge city model from data fetched by fetch.sh")
+ap.add_argument("--name", default="Houston, TX (central)")
+ap.add_argument("--bbox", default="-95.56,29.62,-95.30,29.82", help="west,south,east,north in degrees")
+ap.add_argument("--raw", default=str(Path(__file__).parent / "raw"))
+ap.add_argument("--out", default=str(Path(__file__).parent / "houston.json"))
+ap.add_argument("--addresses", type=int, default=20000)
+ARGS = ap.parse_args()
+RAW = Path(ARGS.raw)
+OUT = Path(ARGS.out)
+W, S, E, N = (float(v) for v in ARGS.bbox.split(","))
 LON0, LAT0 = (W + E) / 2, (S + N) / 2
 KX, KY = math.cos(math.radians(LAT0)) * 111320.0, 110574.0
 CELL = 75.0
 ROAD_CLASSES = ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "unclassified", "living_street"]
 DRAIN_CLASSES = {"river", "stream", "canal", "drain", "ditch"}
+# named channels only: bayous and rivers are main channels, the rest tributaries
+CHANNEL_NAMES = r"bayou|river|creek|branch|gully|diversion|ditch|run|brook|kill|fork|slough|wash|arroyo"
 
 
 def proj(lon, lat):
@@ -209,9 +220,10 @@ def build_water():
     lines = []
     for r in t:
         name = (r["names"] or {}).get("primary") or ""
-        if r["class"] not in DRAIN_CLASSES or not re.search(r"bayou|creek|branch|gully|diversion|ditch", name, re.I):
+        if r["class"] not in DRAIN_CLASSES or not re.search(CHANNEL_NAMES, name, re.I):
             continue
-        rank = 2 if re.search(r"bayou", name, re.I) and not re.search(r"country club|little", name, re.I) else 1
+        main = re.search(r"bayou", name, re.I) or (r["class"] == "river" and re.search(r"river", name, re.I))
+        rank = 2 if main and not re.search(r"country club|little", name, re.I) else 1
         g = shapely.from_wkb(r["geometry"])
         g = shapely.transform(g, lambda c: np.column_stack(proj(c[:, 0], c[:, 1])))
         for part in getattr(g, "geoms", [g]):
@@ -229,7 +241,7 @@ def build_water():
 
 
 # ---------------------------------------------------------------- stations + addresses
-NOT_POLICE = r"foundation|pension|property|mental|isd|universit|college|rice|\bUT\b|HCC|southern|christian|storefront|store front|security|stations and"
+NOT_POLICE = r"foundation|pension|property|mental|isd|universit|college|rice|\bUT\b|HCC|southern|christian|storefront|store front|security|stations and|association|santa|dispatch"
 NOT_HOSPITAL = r"foundation|district|clinic|imaging|pharmacy|lab|rehab|psychiatric|veterinary|animal|surgical|orthopedic|kindred|vibra|acuity|west oaks|elite health|durham|meridian"
 
 
@@ -331,7 +343,7 @@ def main():
     snap = Snapper(nodes)
     stations = build_stations(snap)
     print("stations:", collections.Counter(s["kind"] for s in stations))
-    streets, addrs = build_addresses(snap)
+    streets, addrs = build_addresses(snap, ARGS.addresses)
     print(f"addresses: {len(addrs) // 5}")
     keep = {s["node"] for s in stations} | set(addrs[4::5])
     nodes, edges, remap = contract(nodes, edges, keep)
@@ -345,7 +357,7 @@ def main():
     drain, water = build_water()
     print(f"terrain {GW}x{GH} @ {CELL} m, elevation {elev.min():.1f}..{elev.max():.1f} m, drainage cells {int(drain.sum())}")
     city = {
-        "name": "Houston, TX (central)",
+        "name": ARGS.name,
         "origin": [LON0, LAT0],
         "scale": [KX, KY],
         "bounds": [round(X0), round(Y0), round(X1), round(Y1)],

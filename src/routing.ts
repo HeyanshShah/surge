@@ -50,7 +50,8 @@ export class Router {
     const via = new Int32Array(city.n).fill(-1);
     const close = this.flood.edgeClose[kind];
     const pace = this.pace[kind];
-    const stage = this.flood.stage(t);
+    const stages = this.flood.stages(t);
+    const edgeCh = this.flood.edgeChannel;
     const heap = this.heap;
     heap.clear();
     time[source] = 0;
@@ -62,7 +63,7 @@ export class Router {
       if (d > limit) break;
       for (let k = city.adjStart[v]; k < city.adjStart[v + 1]; k++) {
         const e = city.adjEdge[k];
-        if (stage >= close[e]) continue;
+        if (stages[edgeCh[e]] >= close[e]) continue;
         const w = city.eA[e] === v ? city.eB[e] : city.eA[e];
         const nd = d + city.eLen[e] * pace[e];
         if (nd < time[w]) {

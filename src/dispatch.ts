@@ -1,9 +1,10 @@
 import type { City } from './city';
+import type { FloodModel, VehicleKind } from './flood';
 import { assignMax } from './hungarian';
 import { type RiskInput, survival } from './outcomes';
 import type { Cad, Policy, Sim } from './sim';
-import { Triager } from './triage';
-import { CAN_SERVE, type Call, PROTOCOL_PRIORITY, type Vulnerability } from './types';
+import { type Triage, Triager } from './triage';
+import { CAN_SERVE, type Call, type IncidentType, PROTOCOL_PRIORITY, type UnitKind, type Vulnerability } from './types';
 
 /**
  * Two conventional baselines and the copilot.
@@ -109,27 +110,141 @@ export interface SurgeOptions {
   name?: string;
 }
 
+/** What the copilot knows about an open incident. The simulator's CAD entries and the live center's incidents both fit. */
+export interface OpenIncident {
+  id: number;
+  opened: number;
+  type: IncidentType;
+  acuity: number;
+  x: number;
+  y: number;
+  node: number;
+  people: number;
+  vuln: Vulnerability;
+  reportedDepth: number | null;
+}
+
+export interface FreeUnit {
+  id: number;
+  kind: UnitKind;
+  vehicle: VehicleKind;
+  node: number;
+}
+
+export interface Pick {
+  unit: number;
+  incident: number;
+  /** Drive time on the flooded network (minutes). */
+  minutes: number;
+  /** Expected lives saved by sending this unit now rather than later. */
+  gain: number;
+}
+
+export interface PlanContext {
+  flood: FloodModel;
+  /** Drive minutes from every road node to `node` for this vehicle at time t. */
+  timesTo(node: number, vehicle: VehicleKind, t: number): Float32Array;
+  forecast?: boolean;
+  /** Vehicle kinds already turned back by water at an incident; never recommend them there again. */
+  blocked?: (incident: number, vehicle: VehicleKind) => boolean;
+}
+
+/** Expected lives saved by reaching this incident `tt` minutes from now instead of HORIZON minutes later. */
+export function lifeGain(c: OpenIncident, flood: FloodModel, now: number, tt: number, forecast = true): number {
+  const r: RiskInput = {
+    type: c.type,
+    vuln: c.vuln,
+    severity: 1,
+    depthAt: (t) => Math.max(c.reportedDepth ?? 0, forecast ? flood.depthAt(c.x, c.y, t) : 0),
+  };
+  const t0 = c.opened - 4;
+  const g = c.people * (survival(r, t0, now + tt) - survival(r, t0, now + tt + HORIZON));
+  // a small aging term so nobody waits forever behind a stream of urgent calls
+  return g + 0.0004 * c.people * (now - c.opened) + 1e-6 * (5 - c.acuity);
+}
+
+/**
+ * One copilot round: the optimal assignment of free units to waiting incidents, maximizing expected lives saved
+ * minus the opportunity cost of each crew's drive time on the flooded road network.
+ */
+export function planAssignments(free: FreeUnit[], waiting: OpenIncident[], now: number, ctx: PlanContext): Pick[] {
+  if (!free.length || !waiting.length) return [];
+  const forecast = ctx.forecast ?? true;
+  const gain = (c: OpenIncident, tt: number) => lifeGain(c, ctx.flood, now, tt, forecast);
+  // shortlist the most urgent incidents each kind of free unit could take, so a queue full of
+  // boat-only rescues never starves the patrol cars and ambulances that could be working
+  const scored = waiting.map((c) => ({ c, g: gain(c, 0) })).sort((a, b) => b.g - a.g);
+  const shortlist = new Set<OpenIncident>();
+  for (const kind of new Set(free.map((u) => u.kind))) {
+    let n = 0;
+    for (const { c } of scored) {
+      if (n >= TOP_K) break;
+      if (CAN_SERVE[c.type].includes(kind)) {
+        shortlist.add(c);
+        n++;
+      }
+    }
+  }
+  const ranked = [...shortlist];
+  const vehicles = [...new Set(free.map((u) => u.vehicle))];
+  const units = free.filter((u) => ranked.some((c) => CAN_SERVE[c.type].includes(u.kind)));
+  const times = new Map<string, Float32Array>();
+  for (const c of ranked) for (const v of vehicles) times.set(`${c.id}|${v}`, ctx.timesTo(c.node, v, now));
+  const tt = (u: FreeUnit, c: OpenIncident) => times.get(`${c.id}|${u.vehicle}`)![u.node];
+  const value = units.map((u) =>
+    ranked.map((c) => {
+      const pref = CAN_SERVE[c.type].indexOf(u.kind);
+      if (pref < 0 || ctx.blocked?.(c.id, u.vehicle)) return -Infinity;
+      const t = tt(u, c);
+      if (!Number.isFinite(t) || t > MAX_TRAVEL) return -Infinity;
+      // prefer the right tool (a boat for a rescue), and tie-break toward shorter drives
+      return gain(c, t) * PREF[pref] - t * UNIT_MINUTE;
+    }),
+  );
+  const out: Pick[] = [];
+  assignMax(value).forEach((j, i) => {
+    if (j >= 0) out.push({ unit: units[i].id, incident: ranked[j].id, minutes: tt(units[i], ranked[j]), gain: gain(ranked[j], tt(units[i], ranked[j])) });
+  });
+  return out;
+}
+
+/**
+ * Duplicate detection: same phone, same address, or (no address given) a compatible open incident
+ * inside the caller's location fix opened in the last two hours.
+ */
+export function findDuplicate<T extends OpenIncident & { addressId: number | null }>(
+  open: T[],
+  tr: Triage,
+  caller: { phone?: string; x?: number; y?: number; r?: number },
+  phonesOf: (c: T) => string[],
+  now: number,
+): T | undefined {
+  const a = tr.address;
+  return (
+    (caller.phone ? open.find((c) => phonesOf(c).includes(caller.phone!)) : undefined) ??
+    (a ? open.find((c) => (a.id >= 0 && c.addressId === a.id) || Math.hypot(c.x - a.x, c.y - a.y) < 25) : undefined) ??
+    (!a && caller.x !== undefined && caller.y !== undefined
+      ? open.find((c) => c.type === tr.type && Math.hypot(c.x - caller.x!, c.y - caller.y!) < (caller.r ?? 0) + 100 && now - c.opened < 120)
+      : undefined)
+  );
+}
+
+/** A repeat call escalates the incident: keep the worst news. */
+export function escalate(c: OpenIncident & { status: string }, tr: Triage): void {
+  if (tr.reportedDepth !== null) c.reportedDepth = Math.max(c.reportedDepth ?? 0, tr.reportedDepth);
+  c.people = Math.max(c.people, tr.people);
+  for (const k of Object.keys(c.vuln) as (keyof Vulnerability)[]) c.vuln[k] ||= tr.vuln[k];
+  if (tr.acuity < c.acuity && CAN_SERVE[tr.type].length) {
+    c.acuity = tr.acuity;
+    if (c.status === 'waiting') c.type = tr.type;
+  }
+}
+
 export function surgePolicy(city: City, opts: SurgeOptions = {}): Policy & { triager: Triager } {
   const forecast = opts.forecast ?? true;
   const triager = new Triager(city);
   let lastRound = -Infinity;
   let dirty = true;
-
-  const risk = (cad: Cad, sim: Sim): RiskInput => ({
-    type: cad.type,
-    vuln: cad.vuln,
-    severity: 1,
-    depthAt: (t) => Math.max(cad.reportedDepth ?? 0, forecast ? sim.flood.depthAt(cad.x, cad.y, t) : 0),
-  });
-
-  /** Expected lives saved by reaching this incident `tt` minutes from now instead of HORIZON minutes later. */
-  const gain = (cad: Cad, sim: Sim, now: number, tt: number) => {
-    const r = risk(cad, sim);
-    const t0 = cad.opened - 4;
-    const g = cad.people * (survival(r, t0, now + tt) - survival(r, t0, now + tt + HORIZON));
-    // a small aging term so nobody waits forever behind a stream of urgent calls
-    return g + 0.0004 * cad.people * (now - cad.opened) + 1e-6 * (5 - cad.acuity);
-  };
 
   return {
     name: opts.name ?? 'Surge copilot',
@@ -138,24 +253,10 @@ export function surgePolicy(city: City, opts: SurgeOptions = {}): Policy & { tri
       const tr = triager.triage(call.transcript, call.aliX, call.aliY);
       const loc = tr.address ? { x: tr.address.x, y: tr.address.y, node: tr.address.node } : locate(sim, call.aliX, call.aliY);
       dirty = true;
-      // duplicate detection: same phone, same address, or (no address given) a compatible open incident inside the location fix
-      const open = sim.openCads();
-      const dup =
-        open.find((c) => c.calls.some((k) => sim.scenario.calls[k].phone === call.phone)) ??
-        (tr.address ? open.find((c) => (tr.address!.id >= 0 && c.addressId === tr.address!.id) || Math.hypot(c.x - tr.address!.x, c.y - tr.address!.y) < 25) : undefined) ??
-        (!tr.address && !call.thirdParty
-          ? open.find((c) => c.type === tr.type && Math.hypot(c.x - call.aliX, c.y - call.aliY) < call.aliR + 100 && now - c.opened < 120)
-          : undefined);
+      const dup = findDuplicate(sim.openCads(), tr, { phone: call.phone, x: call.aliX, y: call.aliY, r: call.aliR }, (c) => c.calls.map((k) => sim.scenario.calls[k].phone), now);
       if (dup) {
         sim.mergeCad(call, dup);
-        // callbacks escalate: keep the worst news
-        if (tr.reportedDepth !== null) dup.reportedDepth = Math.max(dup.reportedDepth ?? 0, tr.reportedDepth);
-        dup.people = Math.max(dup.people, tr.people);
-        for (const k of Object.keys(dup.vuln) as (keyof Vulnerability)[]) dup.vuln[k] ||= tr.vuln[k];
-        if (tr.acuity < dup.acuity && CAN_SERVE[tr.type].length) {
-          dup.acuity = tr.acuity;
-          if (dup.status === 'waiting') dup.type = tr.type;
-        }
+        escalate(dup, tr);
         if (dup.addressId === null && tr.address) Object.assign(dup, { addressId: tr.address.id, ...loc });
         return;
       }
@@ -180,44 +281,7 @@ export function surgePolicy(city: City, opts: SurgeOptions = {}): Policy & { tri
       if (!idle.length || !waiting.length) return [];
       dirty = false;
       lastRound = now;
-
-      // shortlist the most urgent incidents each kind of free unit could take, so a queue full of
-      // boat-only rescues never starves the patrol cars and ambulances that could be working
-      const scored = waiting.map((c) => ({ c, g: gain(c, sim, now, 0) })).sort((a, b) => b.g - a.g);
-      const shortlist = new Set<Cad>();
-      for (const kind of new Set(idle.map((u) => u.kind))) {
-        let n = 0;
-        for (const { c } of scored) {
-          if (n >= TOP_K) break;
-          if (CAN_SERVE[c.type].includes(kind)) {
-            shortlist.add(c);
-            n++;
-          }
-        }
-      }
-      const ranked = [...shortlist];
-      const vehicles = [...new Set(idle.map((u) => u.vehicle))];
-      const value: number[][] = [];
-      const units = idle.filter((u) => ranked.some((c) => CAN_SERVE[c.type].includes(u.kind)));
-      const times = new Map<string, Float32Array>();
-      for (const c of ranked) for (const v of vehicles) times.set(`${c.id}|${v}`, sim.timesTo(c.node, v, now));
-      for (const u of units) {
-        value.push(
-          ranked.map((c) => {
-            const pref = CAN_SERVE[c.type].indexOf(u.kind);
-            if (pref < 0) return -Infinity;
-            const tt = times.get(`${c.id}|${u.vehicle}`)![u.node];
-            if (!Number.isFinite(tt) || tt > MAX_TRAVEL) return -Infinity;
-            // prefer the right tool (a boat for a rescue), and tie-break toward shorter drives
-            return gain(c, sim, now, tt) * PREF[pref] - tt * UNIT_MINUTE;
-          }),
-        );
-      }
-      const pick = assignMax(value);
-      const out: [number, number][] = [];
-      pick.forEach((j, i) => {
-        if (j >= 0) out.push([units[i].id, ranked[j].id]);
-      });
+      const out = planAssignments(idle, waiting, now, { flood: sim.flood, timesTo: (n, v, t) => sim.timesTo(n, v, t), forecast }).map((p) => [p.unit, p.incident] as [number, number]);
       if (out.length) dirty = true;
       return out;
     },

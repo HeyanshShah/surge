@@ -1,0 +1,124 @@
+{
+ "gauges": [
+  {
+   "lid": "BBST2",
+   "name": "Buffalo Bayou at Shepherd Drive",
+   "rfc": {
+    "abbreviation": "WGRFC",
+    "name": "West Gulf River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "HGX",
+    "name": "Dickinson"
+   },
+   "state": {
+    "abbreviation": "TX",
+    "name": "Texas"
+   },
+   "latitude": 29.76,
+   "longitude": -95.408333333333,
+   "pedts": {
+    "observed": "HGIRG",
+    "forecast": "HGIFF"
+   },
+   "status": {
+    "observed": {
+     "primary": 6.55,
+     "primaryUnit": "ft",
+     "secondary": 1.62,
+     "secondaryUnit": "kcfs",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-11T23:15:00Z"
+    },
+    "forecast": {
+     "primary": -999,
+     "primaryUnit": "",
+     "secondary": -999,
+     "secondaryUnit": "",
+     "floodCategory": "fcst_not_current",
+     "validTime": "0001-01-01T00:00:00Z"
+    }
+   }
+  },
+  {
+   "lid": "HBMT2",
+   "name": "Brays Bayou at Houston",
+   "rfc": {
+    "abbreviation": "WGRFC",
+    "name": "West Gulf River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "HGX",
+    "name": "Dickinson"
+   },
+   "state": {
+    "abbreviation": "TX",
+    "name": "Texas"
+   },
+   "latitude": 29.69717,
+   "longitude": -95.41216,
+   "pedts": {
+    "observed": "HGIRG",
+    "forecast": "HGIFF"
+   },
+   "status": {
+    "observed": {
+     "primary": 7.2,
+     "primaryUnit": "ft",
+     "secondary": 1.62,
+     "secondaryUnit": "kcfs",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-11T23:15:00Z"
+    },
+    "forecast": {
+     "primary": -999,
+     "primaryUnit": "",
+     "secondary": -999,
+     "secondaryUnit": "",
+     "floodCategory": "fcst_not_current",
+     "validTime": "0001-01-01T00:00:00Z"
+    }
+   }
+  },
+  {
+   "lid": "GSST2",
+   "name": "Brays Bayou at Gessner Drive",
+   "rfc": {
+    "abbreviation": "WGRFC",
+    "name": "West Gulf River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "HGX",
+    "name": "Dickinson"
+   },
+   "state": {
+    "abbreviation": "TX",
+    "name": "Texas"
+   },
+   "latitude": 29.6739,
+   "longitude": -95.5263,
+   "pedts": {
+    "observed": "HGIRG",
+    "forecast": "HGIFF"
+   },
+   "status": {
+    "observed": {
+     "primary": 9.1,
+     "primaryUnit": "ft",
+     "secondary": 1.62,
+     "secondaryUnit": "kcfs",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-11T23:15:00Z"
+    },
+    "forecast": {
+     "primary": -999,
+     "primaryUnit": "",
+     "secondary": -999,
+     "secondaryUnit": "",
+     "floodCategory": "fcst_not_current",
+     "validTime": "0001-01-01T00:00:00Z"
+    }
+   }
+  }
+ ]
+}

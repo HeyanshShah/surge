@@ -1,6 +1,6 @@
-"""Pull one Overture Maps theme/type for the Houston study area straight from the public S3 bucket.
+"""Pull one Overture Maps theme/type for a study area straight from the public S3 bucket.
 
-usage: python3 fetch_overture.py <theme> <type> <out.parquet> <comma,separated,columns>
+usage: python3 fetch_overture.py <theme> <type> <out.parquet> <comma,separated,columns> [west,south,east,north]
 Row groups are pruned by their bbox statistics, so only a few MB are actually transferred.
 """
 import sys
@@ -10,7 +10,9 @@ import pyarrow.fs as fs
 import pyarrow.parquet as pq
 
 RELEASE = "2026-09-23.1"
-W, S, E, N = -95.56, 29.62, -95.30, 29.82  # central Houston: downtown, Medical Center, Meyerland, Bellaire, Heights
+# default: central Houston (downtown, Medical Center, Meyerland, Bellaire, Heights)
+BBOX = sys.argv[5] if len(sys.argv) > 5 else "-95.56,29.62,-95.30,29.82"
+W, S, E, N = (float(v) for v in BBOX.split(","))
 
 theme, typ, out, cols = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split(",")
 s3 = fs.S3FileSystem(anonymous=True, region="us-west-2")

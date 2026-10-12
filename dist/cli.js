@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/city.ts
@@ -685,23 +685,72 @@ var TOP_K = 24;
 var MAX_TRAVEL = 75;
 var PREF = [1, 0.85, 0.85];
 var UNIT_MINUTE = 0.01;
+function lifeGain(c, flood, now, tt, forecast = true) {
+  const r = {
+    type: c.type,
+    vuln: c.vuln,
+    severity: 1,
+    depthAt: (t) => Math.max(c.reportedDepth ?? 0, forecast ? flood.depthAt(c.x, c.y, t) : 0)
+  };
+  const t0 = c.opened - 4;
+  const g = c.people * (survival(r, t0, now + tt) - survival(r, t0, now + tt + HORIZON));
+  return g + 4e-4 * c.people * (now - c.opened) + 1e-6 * (5 - c.acuity);
+}
+function planAssignments(free, waiting, now, ctx) {
+  if (!free.length || !waiting.length) return [];
+  const forecast = ctx.forecast ?? true;
+  const gain = (c, tt2) => lifeGain(c, ctx.flood, now, tt2, forecast);
+  const scored = waiting.map((c) => ({ c, g: gain(c, 0) })).sort((a, b) => b.g - a.g);
+  const shortlist = /* @__PURE__ */ new Set();
+  for (const kind of new Set(free.map((u) => u.kind))) {
+    let n = 0;
+    for (const { c } of scored) {
+      if (n >= TOP_K) break;
+      if (CAN_SERVE[c.type].includes(kind)) {
+        shortlist.add(c);
+        n++;
+      }
+    }
+  }
+  const ranked = [...shortlist];
+  const vehicles = [...new Set(free.map((u) => u.vehicle))];
+  const units = free.filter((u) => ranked.some((c) => CAN_SERVE[c.type].includes(u.kind)));
+  const times = /* @__PURE__ */ new Map();
+  for (const c of ranked) for (const v of vehicles) times.set(`${c.id}|${v}`, ctx.timesTo(c.node, v, now));
+  const tt = (u, c) => times.get(`${c.id}|${u.vehicle}`)[u.node];
+  const value = units.map(
+    (u) => ranked.map((c) => {
+      const pref = CAN_SERVE[c.type].indexOf(u.kind);
+      if (pref < 0 || ctx.blocked?.(c.id, u.vehicle)) return -Infinity;
+      const t = tt(u, c);
+      if (!Number.isFinite(t) || t > MAX_TRAVEL) return -Infinity;
+      return gain(c, t) * PREF[pref] - t * UNIT_MINUTE;
+    })
+  );
+  const out = [];
+  assignMax(value).forEach((j, i) => {
+    if (j >= 0) out.push({ unit: units[i].id, incident: ranked[j].id, minutes: tt(units[i], ranked[j]), gain: gain(ranked[j], tt(units[i], ranked[j])) });
+  });
+  return out;
+}
+function findDuplicate(open, tr, caller, phonesOf, now) {
+  const a = tr.address;
+  return (caller.phone ? open.find((c) => phonesOf(c).includes(caller.phone)) : void 0) ?? (a ? open.find((c) => a.id >= 0 && c.addressId === a.id || Math.hypot(c.x - a.x, c.y - a.y) < 25) : void 0) ?? (!a && caller.x !== void 0 && caller.y !== void 0 ? open.find((c) => c.type === tr.type && Math.hypot(c.x - caller.x, c.y - caller.y) < (caller.r ?? 0) + 100 && now - c.opened < 120) : void 0);
+}
+function escalate(c, tr) {
+  if (tr.reportedDepth !== null) c.reportedDepth = Math.max(c.reportedDepth ?? 0, tr.reportedDepth);
+  c.people = Math.max(c.people, tr.people);
+  for (const k of Object.keys(c.vuln)) c.vuln[k] ||= tr.vuln[k];
+  if (tr.acuity < c.acuity && CAN_SERVE[tr.type].length) {
+    c.acuity = tr.acuity;
+    if (c.status === "waiting") c.type = tr.type;
+  }
+}
 function surgePolicy(city, opts = {}) {
   const forecast = opts.forecast ?? true;
   const triager = new Triager(city);
   let lastRound = -Infinity;
   let dirty = true;
-  const risk = (cad, sim) => ({
-    type: cad.type,
-    vuln: cad.vuln,
-    severity: 1,
-    depthAt: (t) => Math.max(cad.reportedDepth ?? 0, forecast ? sim.flood.depthAt(cad.x, cad.y, t) : 0)
-  });
-  const gain = (cad, sim, now, tt) => {
-    const r = risk(cad, sim);
-    const t0 = cad.opened - 4;
-    const g = cad.people * (survival(r, t0, now + tt) - survival(r, t0, now + tt + HORIZON));
-    return g + 4e-4 * cad.people * (now - cad.opened) + 1e-6 * (5 - cad.acuity);
-  };
   return {
     name: opts.name ?? "Surge copilot",
     triager,
@@ -709,17 +758,10 @@ function surgePolicy(city, opts = {}) {
       const tr = triager.triage(call.transcript, call.aliX, call.aliY);
       const loc = tr.address ? { x: tr.address.x, y: tr.address.y, node: tr.address.node } : locate(sim, call.aliX, call.aliY);
       dirty = true;
-      const open = sim.openCads();
-      const dup = open.find((c) => c.calls.some((k) => sim.scenario.calls[k].phone === call.phone)) ?? (tr.address ? open.find((c) => tr.address.id >= 0 && c.addressId === tr.address.id || Math.hypot(c.x - tr.address.x, c.y - tr.address.y) < 25) : void 0) ?? (!tr.address && !call.thirdParty ? open.find((c) => c.type === tr.type && Math.hypot(c.x - call.aliX, c.y - call.aliY) < call.aliR + 100 && now - c.opened < 120) : void 0);
+      const dup = findDuplicate(sim.openCads(), tr, { phone: call.phone, x: call.aliX, y: call.aliY, r: call.aliR }, (c) => c.calls.map((k) => sim.scenario.calls[k].phone), now);
       if (dup) {
         sim.mergeCad(call, dup);
-        if (tr.reportedDepth !== null) dup.reportedDepth = Math.max(dup.reportedDepth ?? 0, tr.reportedDepth);
-        dup.people = Math.max(dup.people, tr.people);
-        for (const k of Object.keys(dup.vuln)) dup.vuln[k] ||= tr.vuln[k];
-        if (tr.acuity < dup.acuity && CAN_SERVE[tr.type].length) {
-          dup.acuity = tr.acuity;
-          if (dup.status === "waiting") dup.type = tr.type;
-        }
+        escalate(dup, tr);
         if (dup.addressId === null && tr.address) Object.assign(dup, { addressId: tr.address.id, ...loc });
         return;
       }
@@ -742,40 +784,7 @@ function surgePolicy(city, opts = {}) {
       if (!idle.length || !waiting.length) return [];
       dirty = false;
       lastRound = now;
-      const scored = waiting.map((c) => ({ c, g: gain(c, sim, now, 0) })).sort((a, b) => b.g - a.g);
-      const shortlist = /* @__PURE__ */ new Set();
-      for (const kind of new Set(idle.map((u) => u.kind))) {
-        let n = 0;
-        for (const { c } of scored) {
-          if (n >= TOP_K) break;
-          if (CAN_SERVE[c.type].includes(kind)) {
-            shortlist.add(c);
-            n++;
-          }
-        }
-      }
-      const ranked = [...shortlist];
-      const vehicles = [...new Set(idle.map((u) => u.vehicle))];
-      const value = [];
-      const units = idle.filter((u) => ranked.some((c) => CAN_SERVE[c.type].includes(u.kind)));
-      const times = /* @__PURE__ */ new Map();
-      for (const c of ranked) for (const v of vehicles) times.set(`${c.id}|${v}`, sim.timesTo(c.node, v, now));
-      for (const u of units) {
-        value.push(
-          ranked.map((c) => {
-            const pref = CAN_SERVE[c.type].indexOf(u.kind);
-            if (pref < 0) return -Infinity;
-            const tt = times.get(`${c.id}|${u.vehicle}`)[u.node];
-            if (!Number.isFinite(tt) || tt > MAX_TRAVEL) return -Infinity;
-            return gain(c, sim, now, tt) * PREF[pref] - tt * UNIT_MINUTE;
-          })
-        );
-      }
-      const pick = assignMax(value);
-      const out = [];
-      pick.forEach((j, i) => {
-        if (j >= 0) out.push([units[i].id, ranked[j].id]);
-      });
+      const out = planAssignments(idle, waiting, now, { flood: sim.flood, timesTo: (n, v, t) => sim.timesTo(n, v, t), forecast }).map((p) => [p.unit, p.incident]);
       if (out.length) dirty = true;
       return out;
     }
@@ -841,22 +850,62 @@ var NumHeap = class {
 };
 
 // src/flood.ts
+var Hydrograph = class {
+  constructor(points) {
+    this.points = points;
+  }
+  stage(t) {
+    const p = this.points;
+    if (p.length === 0) return 0;
+    if (t <= p[0][0]) return p[0][1];
+    for (let i = 1; i < p.length; i++) {
+      if (t <= p[i][0]) {
+        const [t0, s0] = p[i - 1];
+        const [t1, s1] = p[i];
+        return t1 === t0 ? s1 : s0 + (s1 - s0) * (t - t0) / (t1 - t0);
+      }
+    }
+    return p[p.length - 1][1];
+  }
+  timeOfStage(s, from = -Infinity) {
+    const p = this.points;
+    if (p.length === 0) return Infinity;
+    const start = Math.max(from, p[0][0]);
+    if (this.stage(start) >= s) return start;
+    for (let i = 1; i < p.length; i++) {
+      const [t0, s0] = p[i - 1];
+      const [t1, s1] = p[i];
+      if (t1 < start) continue;
+      if (s1 >= s && s0 < s) {
+        const t = t0 + (s - s0) * (t1 - t0) / (s1 - s0);
+        if (t >= start) return t;
+      }
+    }
+    return Infinity;
+  }
+};
 var FloodModel = class {
-  constructor(city, hydrograph = HARVEY_STAGE) {
+  /**
+   * One stage curve for every channel (the replay), or several with a map from channel cell to curve
+   * (live mode: one curve per river gauge, each bayou reach following its nearest gauge).
+   */
+  constructor(city, curves = HARVEY_STAGE) {
     this.city = city;
-    this.stagePoints = hydrograph;
     const { w, h } = city.grid;
     const n = w * h;
     const elev = city.elev;
     this.src = new Float32Array(n);
     this.spill = new Float32Array(n).fill(Infinity);
+    this.srcCell = new Int32Array(n).fill(-1);
     this.rise = new Float32Array(n);
+    this.channel = new Uint16Array(n);
+    this.curves = isPoints(curves) ? [new Hydrograph(curves)] : curves;
     const heap = new NumHeap();
     for (let c = 0; c < n; c++) {
       if (city.drain[c]) {
         this.src[c] = elev[c];
         this.spill[c] = elev[c];
-        this.rise[c] = city.drain[c] === 2 ? 1 : TRIBUTARY_RISE;
+        this.srcCell[c] = c;
         heap.push(elev[c], c);
       }
     }
@@ -878,16 +927,47 @@ var FloodModel = class {
         if (l < this.spill[nc]) {
           this.spill[nc] = l;
           this.src[nc] = this.src[c];
-          this.rise[nc] = this.rise[c];
+          this.srcCell[nc] = this.srcCell[c];
           heap.push(l, nc);
         }
       }
     }
-    this.edgeClose = {
-      car: new Float32Array(city.m),
-      highwater: new Float32Array(city.m),
-      boat: new Float32Array(city.m).fill(Infinity)
-    };
+    this.edgeClose = { car: new Float32Array(city.m), highwater: new Float32Array(city.m), boat: new Float32Array(city.m).fill(Infinity) };
+    this.edgeChannel = new Uint16Array(city.m);
+    this.setChannels(this.curves, () => 0, (c) => city.drain[c] === 2 ? 1 : TRIBUTARY_RISE);
+  }
+  src;
+  spill;
+  /** The channel cell each terrain cell fills from. */
+  srcCell;
+  /** How much of its channel's rise reaches each cell (tributaries without their own gauge rise less). */
+  rise;
+  /** Which stage curve drives each cell. */
+  channel;
+  curves;
+  /** Stage (m) at which each edge becomes impassable, per vehicle threshold, on the edge's own channel. */
+  edgeClose;
+  edgeChannel;
+  /**
+   * Re-drive the model: `channelOf(drainCell)` picks the curve for each channel cell, `riseOf` how much of it applies.
+   * Recomputes which roads close at which stage. Takes a few hundred milliseconds.
+   */
+  setChannels(curves, channelOf, riseOf = () => 1) {
+    this.curves = curves;
+    const n = this.src.length;
+    const chOf = /* @__PURE__ */ new Map();
+    for (let c = 0; c < n; c++) {
+      const s = this.srcCell[c];
+      if (s < 0) {
+        this.rise[c] = 0;
+        continue;
+      }
+      let ch = chOf.get(s);
+      if (ch === void 0) chOf.set(s, ch = channelOf(s));
+      this.channel[c] = ch;
+      this.rise[c] = riseOf(s);
+    }
+    const city = this.city;
     for (let e = 0; e < city.m; e++) {
       if (city.eFlags[e] & 1) {
         this.edgeClose.car[e] = Infinity;
@@ -896,13 +976,18 @@ var FloodModel = class {
       }
       let car = Infinity;
       let hw = Infinity;
+      let ch = 0;
       const pts = city.edgePoints(e);
       for (let p = 0; p + 3 < pts.length; p += 2) {
         const len = Math.hypot(pts[p + 2] - pts[p], pts[p + 3] - pts[p + 1]);
         const steps = Math.max(1, Math.ceil(len / (city.grid.cell / 2)));
         for (let s = 0; s <= steps; s++) {
           const c = city.cellOf(pts[p] + (pts[p + 2] - pts[p]) * s / steps, pts[p + 1] + (pts[p + 3] - pts[p + 1]) * s / steps);
-          car = Math.min(car, this.onset(c, DEPTH_LIMIT.car));
+          const oc = this.onset(c, DEPTH_LIMIT.car);
+          if (oc < car) {
+            car = oc;
+            ch = this.channel[c];
+          }
           hw = Math.min(hw, this.onset(c, DEPTH_LIMIT.highwater));
         }
       }
@@ -912,58 +997,48 @@ var FloodModel = class {
       }
       this.edgeClose.car[e] = car;
       this.edgeClose.highwater[e] = hw;
+      this.edgeChannel[e] = ch;
     }
   }
-  src;
-  spill;
-  /** How much of the main-channel rise reaches the channel a cell drains to (tributaries rise less). */
-  rise;
-  stagePoints;
-  /** Stage (m) at which each edge becomes impassable, per vehicle threshold. */
-  edgeClose;
-  /** Channel stage (m above bed) at time t (minutes into the scenario). */
+  /** Stage of the first channel at time t (the whole replay storm uses one). */
   stage(t) {
-    const p = this.stagePoints;
-    if (t <= p[0][0]) return p[0][1];
-    for (let i = 1; i < p.length; i++) {
-      if (t <= p[i][0]) {
-        const [t0, s0] = p[i - 1];
-        const [t1, s1] = p[i];
-        return s0 + (s1 - s0) * (t - t0) / (t1 - t0);
-      }
-    }
-    return p[p.length - 1][1];
+    return this.curves[0].stage(t);
   }
-  /** First time the stage reaches s, or Infinity if it never does. */
-  timeOfStage(s) {
-    const p = this.stagePoints;
-    if (s <= p[0][1]) return p[0][0];
-    for (let i = 1; i < p.length; i++) {
-      const [t0, s0] = p[i - 1];
-      const [t1, s1] = p[i];
-      if (s1 >= s && s0 < s) return t0 + (s - s0) * (t1 - t0) / (s1 - s0);
-    }
-    return Infinity;
+  /** Stage of every channel at time t. */
+  stages(t) {
+    return Float64Array.from(this.curves, (c) => c.stage(t));
   }
-  /** Lowest stage at which cell c has at least `depth` meters of water. */
+  timeOfStage(s, from) {
+    return this.curves[0].timeOfStage(s, from);
+  }
+  /** Lowest stage of its own channel at which cell c has at least `depth` meters of water. */
   onset(c, depth) {
+    if (this.rise[c] <= 0) return Infinity;
     return Math.max(this.spill[c] - this.src[c], this.city.elev[c] + depth - this.src[c]) / this.rise[c];
   }
+  /** Depth in cell c when its channel is at `stage`. */
   depth(c, stage) {
     const top = this.src[c] + stage * this.rise[c];
     return top >= this.spill[c] ? Math.max(0, top - this.city.elev[c]) : 0;
   }
-  depthAt(x, y, t) {
-    return this.depth(this.city.cellOf(x, y), this.stage(t));
+  depthCell(c, t) {
+    return this.depth(c, this.curves[this.channel[c]].stage(t));
   }
-  /** When water at (x, y) first reaches `depth` meters (minutes), or Infinity. */
-  timeToDepth(x, y, depth) {
-    return this.timeOfStage(this.onset(this.city.cellOf(x, y), depth));
+  depthAt(x, y, t) {
+    return this.depthCell(this.city.cellOf(x, y), t);
+  }
+  /** When water at (x, y) first reaches `depth` meters (minutes, at or after `from`), or Infinity. */
+  timeToDepth(x, y, depth, from) {
+    const c = this.city.cellOf(x, y);
+    return this.curves[this.channel[c]].timeOfStage(this.onset(c, depth), from);
   }
   passable(e, kind, t) {
-    return this.stage(t) < this.edgeClose[kind][e];
+    return this.curves[this.edgeChannel[e]].stage(t) < this.edgeClose[kind][e];
   }
 };
+function isPoints(x) {
+  return x.length > 0 && Array.isArray(x[0]);
+}
 var DEPTH_LIMIT = { car: 0.3, highwater: 0.9, boat: Infinity };
 var HARVEY_STAGE = [
   [0, 0.8],
@@ -1010,7 +1085,8 @@ var Router = class {
     const via = new Int32Array(city.n).fill(-1);
     const close = this.flood.edgeClose[kind];
     const pace = this.pace[kind];
-    const stage = this.flood.stage(t);
+    const stages = this.flood.stages(t);
+    const edgeCh = this.flood.edgeChannel;
     const heap = this.heap;
     heap.clear();
     time[source] = 0;
@@ -1022,7 +1098,7 @@ var Router = class {
       if (d > limit) break;
       for (let k = city.adjStart[v]; k < city.adjStart[v + 1]; k++) {
         const e = city.adjEdge[k];
-        if (stage >= close[e]) continue;
+        if (stages[edgeCh[e]] >= close[e]) continue;
         const w = city.eA[e] === v ? city.eB[e] : city.eA[e];
         const nd = d + city.eLen[e] * pace[e];
         if (nd < time[w]) {
@@ -1720,30 +1796,677 @@ function defaultFleet(city, opts = {}) {
   return fleet;
 }
 
+// src/live/server.ts
+import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+
+// src/live/gauges.ts
+var USGS_IV = "https://waterservices.usgs.gov/nwis/iv/";
+var NWPS = "https://api.water.noaa.gov/nwps/v1";
+var FT = 0.3048;
+var MISSING = -900;
+function parseUsgsIv(json) {
+  const series = json?.value?.timeSeries ?? [];
+  const out = [];
+  for (const raw of series) {
+    const ts = raw;
+    const site = ts.sourceInfo?.siteCode?.[0]?.value;
+    if (!site) continue;
+    const noData = ts.variable?.noDataValue ?? -999999;
+    const observed = [];
+    for (const block of ts.values ?? [])
+      for (const v of block.value ?? []) {
+        const ft = Number(v.value);
+        const t = Date.parse(v.dateTime);
+        if (Number.isFinite(ft) && ft !== noData && ft > MISSING && Number.isFinite(t)) observed.push({ t, ft });
+      }
+    observed.sort((a, b) => a.t - b.t);
+    const g = ts.sourceInfo.geoLocation.geogLocation;
+    const prev = out.find((o) => o.id === site);
+    if (prev) {
+      if (observed.length > prev.observed.length) prev.observed = observed;
+      continue;
+    }
+    out.push({ id: site, usgsId: site, name: tidy(ts.sourceInfo.siteName), lon: g.longitude, lat: g.latitude, observed, forecast: [] });
+  }
+  return out;
+}
+function parseNwpsGauges(json) {
+  const list = json?.gauges ?? [];
+  return list.filter((g) => g.lid).map((g) => ({ lid: g.lid, name: tidy(g.name), lat: g.latitude, lon: g.longitude }));
+}
+function parseNwpsGauge(json) {
+  const g = json;
+  const cat = g?.flood?.categories ?? {};
+  const st = (k) => {
+    const v = cat[k]?.stage;
+    return typeof v === "number" && v > MISSING ? v : void 0;
+  };
+  return { usgsId: g?.usgsId || void 0, flood: { action: st("action"), minor: st("minor"), moderate: st("moderate"), major: st("major") } };
+}
+function parseNwpsStageflow(json) {
+  const j = json;
+  const read = (d) => (d ?? []).map((r) => ({ t: Date.parse(r.validTime), ft: r.primary })).filter((r) => Number.isFinite(r.t) && typeof r.ft === "number" && r.ft > MISSING).sort((a, b) => a.t - b.t);
+  return { observed: read(j?.observed?.data), forecast: read(j?.forecast?.data) };
+}
+function tidy(name) {
+  return (name ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/\b(tx|la|fl|nc|sc|ny|nj|va|ga|al|ms|ca|pa)\b/g, (s) => s.toUpperCase()).replace(/\b([a-z])/g, (s) => s.toUpperCase()).replace(/\bAt\b/g, "at").replace(/\bNr\b/g, "near").replace(/\bBlw\b/g, "below").replace(/\bAbv\b/g, "above");
+}
+async function fetchGauges(bbox, opts = {}) {
+  const f = opts.fetch ?? globalThis.fetch;
+  const pad = 0.04;
+  const [w, s, e, n] = [bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad].map((v) => v.toFixed(4));
+  const errors = [];
+  const get = async (url) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 2e4);
+    try {
+      const r = await f(url, { signal: ctl.signal });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const usgsUrl = `${USGS_IV}?format=json&bBox=${w},${s},${e},${n}&parameterCd=00065&siteStatus=active&period=P${opts.days ?? 7}D`;
+  const nwpsUrl = `${NWPS}/gauges?bbox.xmin=${w}&bbox.ymin=${s}&bbox.xmax=${e}&bbox.ymax=${n}&srid=EPSG_4326`;
+  const [usgs, refs] = await Promise.all([
+    get(usgsUrl).then(parseUsgsIv, (err) => (errors.push(`USGS: ${err.message ?? err}`), [])),
+    get(nwpsUrl).then(parseNwpsGauges, (err) => (errors.push(`NOAA: ${err.message ?? err}`), []))
+  ]);
+  const gauges = usgs;
+  const detail = await Promise.all(
+    refs.slice(0, opts.maxForecastGauges ?? 30).map(async (r) => {
+      try {
+        const [meta, sf] = await Promise.all([get(`${NWPS}/gauges/${r.lid}`).then(parseNwpsGauge), get(`${NWPS}/gauges/${r.lid}/stageflow`).then(parseNwpsStageflow)]);
+        return { r, meta, sf };
+      } catch (err) {
+        errors.push(`NOAA ${r.lid}: ${err.message ?? err}`);
+        return null;
+      }
+    })
+  );
+  for (const d of detail) {
+    if (!d) continue;
+    const match = gauges.find((g) => d.meta.usgsId && g.usgsId === d.meta.usgsId || Math.hypot(g.lon - d.r.lon, g.lat - d.r.lat) < 2e-3);
+    if (match) {
+      match.nwsId = d.r.lid;
+      match.forecast = d.sf.forecast;
+      match.flood = d.meta.flood;
+      if (!match.observed.length) match.observed = d.sf.observed;
+    } else if (d.sf.observed.length) {
+      gauges.push({ id: d.r.lid, nwsId: d.r.lid, usgsId: d.meta.usgsId, name: d.r.name, lon: d.r.lon, lat: d.r.lat, observed: d.sf.observed, forecast: d.sf.forecast, flood: d.meta.flood });
+    }
+  }
+  return { gauges: gauges.filter((g) => g.observed.length >= 2), fetchedAt: Date.now(), errors };
+}
+function gaugeCurve(g, epoch) {
+  const obs = g.observed;
+  const base = baseline(obs);
+  const lastObs = obs.length ? obs[obs.length - 1].t : -Infinity;
+  const pts = obs.map((r) => [(r.t - epoch) / 6e4, Math.max(0, (r.ft - base) * FT)]);
+  if (g.forecast.length && obs.length) {
+    const f0 = g.forecast.find((r) => r.t > lastObs) ?? g.forecast[g.forecast.length - 1];
+    const fAtObs = interpolate(g.forecast, lastObs) ?? f0.ft;
+    const bias = obs[obs.length - 1].ft - fAtObs;
+    const fade = 12 * 36e5;
+    for (const r of g.forecast) {
+      if (r.t <= lastObs) continue;
+      const k = Math.max(0, 1 - (r.t - lastObs) / fade);
+      pts.push([(r.t - epoch) / 6e4, Math.max(0, (r.ft + bias * k - base) * FT)]);
+    }
+  }
+  return new Hydrograph(pts);
+}
+function baseline(obs) {
+  if (!obs.length) return 0;
+  const v = obs.map((r) => r.ft).sort((a, b) => a - b);
+  return v[Math.floor(v.length * 0.02)];
+}
+function interpolate(rs, t) {
+  if (!rs.length || t < rs[0].t || t > rs[rs.length - 1].t) return null;
+  for (let i = 1; i < rs.length; i++)
+    if (t <= rs[i].t) {
+      const a = rs[i - 1];
+      const b = rs[i];
+      return b.t === a.t ? b.ft : a.ft + (b.ft - a.ft) * (t - a.t) / (b.t - a.t);
+    }
+  return rs[rs.length - 1].ft;
+}
+var OffsetCurve = class {
+  constructor(base, add) {
+    this.base = base;
+    this.add = add;
+  }
+  stage(t) {
+    return Math.max(0, this.base.stage(t) + this.add);
+  }
+  timeOfStage(s, from) {
+    return this.base.timeOfStage(s - this.add, from);
+  }
+};
+function lonLatToXY(city, lon, lat) {
+  return [(lon - city.origin[0]) * city.scale[0], (lat - city.origin[1]) * city.scale[1]];
+}
+function driveFromGauges(flood, gauges, epoch, offset = 0) {
+  const city = flood.city;
+  const { w, h, cell } = city.grid;
+  if (!gauges.length) throw new Error("no gauges to drive the flood model");
+  const curves = gauges.map((g) => {
+    const c = gaugeCurve(g, epoch);
+    return offset ? new OffsetCurve(c, offset) : c;
+  });
+  const xy = gauges.map((g) => lonLatToXY(city, g.lon, g.lat));
+  const n = w * h;
+  const owner = new Int32Array(n).fill(-1);
+  const dist = new Float64Array(n).fill(Infinity);
+  const ownRank = new Uint8Array(gauges.length);
+  const snapped = [];
+  const q = [];
+  xy.forEach(([x, y], gi) => {
+    const ci2 = Math.floor((x - city.grid.x0) / cell);
+    const cj = Math.floor((y - city.grid.y0) / cell);
+    const R2 = Math.ceil(1e3 / cell);
+    let best = -1;
+    let bd = Infinity;
+    for (let j = Math.max(0, cj - R2); j <= Math.min(h - 1, cj + R2); j++)
+      for (let i = Math.max(0, ci2 - R2); i <= Math.min(w - 1, ci2 + R2); i++) {
+        const c = j * w + i;
+        if (!city.drain[c]) continue;
+        const d = (i - ci2) ** 2 + (j - cj) ** 2;
+        if (d < bd) {
+          bd = d;
+          best = c;
+        }
+      }
+    snapped.push(best >= 0);
+    if (best >= 0 && dist[best] > 0) {
+      dist[best] = 0;
+      owner[best] = gi;
+      ownRank[gi] = city.drain[best];
+      q.push(best);
+    }
+  });
+  const heap = new NumHeap();
+  for (const c of q) heap.push(0, c);
+  while (heap.size > 0) {
+    const d = heap.topKey();
+    const c = heap.pop();
+    if (d > dist[c]) continue;
+    const i = c % w;
+    const j = (c - i) / w;
+    for (let dj = -1; dj <= 1; dj++)
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const ni = i + di;
+        const nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= w || nj >= h) continue;
+        const nc = nj * w + ni;
+        if (!city.drain[nc]) continue;
+        const nd = d + (di && dj ? Math.SQRT2 : 1);
+        if (nd < dist[nc]) {
+          dist[nc] = nd;
+          owner[nc] = owner[c];
+          heap.push(nd, nc);
+        }
+      }
+  }
+  const cells = new Array(gauges.length).fill(0);
+  let networked = 0;
+  let nearest = 0;
+  const chOf = (s) => {
+    if (owner[s] >= 0) return owner[s];
+    const x = city.grid.x0 + (s % w + 0.5) * cell;
+    const y = city.grid.y0 + (Math.floor(s / w) + 0.5) * cell;
+    let best = 0;
+    let bd = Infinity;
+    xy.forEach(([gx, gy], gi) => {
+      const d = (gx - x) ** 2 + (gy - y) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = gi;
+      }
+    });
+    return best;
+  };
+  for (let c = 0; c < n; c++) {
+    if (!city.drain[c]) continue;
+    const g = chOf(c);
+    cells[g]++;
+    if (owner[c] >= 0) networked++;
+    else nearest++;
+  }
+  flood.setChannels(curves, chOf, (s) => city.drain[s] === 2 || ownRank[chOf(s)] === 1 ? 1 : TRIBUTARY_RISE2);
+  return { gauges: gauges.map((g, gi) => ({ id: g.id, x: xy[gi][0], y: xy[gi][1], snapped: snapped[gi], cells: cells[gi] })), networked, nearest };
+}
+var TRIBUTARY_RISE2 = 0.5;
+function scenarioCurve(rise, hours, start = 0) {
+  return new Hydrograph([
+    [0, start],
+    [hours * 60, start + rise]
+  ]);
+}
+function category(g, ft) {
+  const f = g.flood ?? {};
+  if (f.major !== void 0 && ft >= f.major) return "major";
+  if (f.moderate !== void 0 && ft >= f.moderate) return "moderate";
+  if (f.minor !== void 0 && ft >= f.minor) return "minor";
+  if (f.action !== void 0 && ft >= f.action) return "action";
+  return "none";
+}
+function summarize(g) {
+  const last = g.observed[g.observed.length - 1];
+  const before = interpolate(g.observed, last.t - 3 * 36e5) ?? g.observed[0].ft;
+  const future = g.forecast.filter((r) => r.t > last.t);
+  const peak = future.reduce((m, r) => !m || r.ft > m.ft ? r : m, null);
+  return {
+    id: g.id,
+    name: g.name,
+    lon: g.lon,
+    lat: g.lat,
+    latestFt: last.ft,
+    latestAt: last.t,
+    trendFt: last.ft - before,
+    riseM: Math.max(0, (last.ft - baseline(g.observed)) * FT),
+    category: category(g, last.ft),
+    forecast: peak ? { peakFt: peak.ft, peakAt: peak.t, category: category(g, peak.ft) } : null,
+    flood: g.flood
+  };
+}
+function cityBBox(city) {
+  const [x0, y0, x1, y1] = city.bounds;
+  const [w, s] = city.toLonLat(x0, y0);
+  const [e, n] = city.toLonLat(x1, y1);
+  return [w, s, e, n];
+}
+
+// src/live/center.ts
+var LiveCenter = class {
+  constructor(city, flood, epoch, opts = {}) {
+    this.city = city;
+    this.flood = flood;
+    this.epoch = epoch;
+    this.router = opts.router ?? new Router(city, flood);
+    this.triager = opts.triager ?? new Triager(city);
+    this.clock = opts.clock ?? Date.now;
+    this.units = (opts.fleet ?? defaultFleet(city)).map((s, id) => ({ ...s, id, node: city.stations[s.station].node, status: "available", incident: -1, since: 0 }));
+    for (let e = 0; e < city.m; e++) this.totalKm += city.eLen[e] / 1e3;
+  }
+  router;
+  triager;
+  units;
+  incidents = [];
+  cache = /* @__PURE__ */ new Map();
+  totalKm = 0;
+  clock;
+  /** Minutes since the epoch. */
+  now() {
+    return (this.clock() - this.epoch) / 6e4;
+  }
+  /** The flood model's curves changed (new gauge readings or a what-if): drop cached drive times. */
+  floodChanged() {
+    this.cache.clear();
+  }
+  timesTo(node, vehicle, t) {
+    const key = `${node}|${vehicle}|${Math.floor(t / 5)}`;
+    let v = this.cache.get(key);
+    if (!v) {
+      v = Float32Array.from(this.router.search(node, vehicle, t).time);
+      if (this.cache.size > 400) this.cache.clear();
+      this.cache.set(key, v);
+    }
+    return v;
+  }
+  /** Take a call: triage it, merge it into an open incident if it is a repeat, or open a new one. */
+  call(input) {
+    const now = this.now();
+    const fix = input.lat !== void 0 && input.lon !== void 0 ? lonLatToXY(this.city, input.lon, input.lat) : null;
+    const tr = this.triager.triage(input.text, fix?.[0], fix?.[1]);
+    const open = this.incidents.filter((c) => c.status !== "closed");
+    const dup = findDuplicate(open, tr, { phone: input.phone, x: fix?.[0], y: fix?.[1], r: input.accuracy ?? 300 }, (c) => c.phones, now);
+    const rec = { t: now, text: input.text, phone: input.phone };
+    if (dup) {
+      dup.calls.push(rec);
+      if (input.phone && !dup.phones.includes(input.phone)) dup.phones.push(input.phone);
+      escalate(dup, tr);
+      if (dup.addressId === null && tr.address) Object.assign(dup, { addressId: tr.address.id, addressText: tr.addressText, x: tr.address.x, y: tr.address.y, node: tr.address.node });
+      return { incident: dup, merged: true, triage: tr };
+    }
+    const where = tr.address ?? (fix ? { x: fix[0], y: fix[1], node: this.city.nearestNode(fix[0], fix[1]), id: -1 } : null);
+    const inc = {
+      id: this.incidents.length,
+      opened: now,
+      type: tr.type,
+      acuity: tr.acuity,
+      x: where?.x ?? NaN,
+      y: where?.y ?? NaN,
+      node: where?.node ?? -1,
+      people: tr.people,
+      vuln: { ...tr.vuln },
+      reportedDepth: tr.reportedDepth,
+      addressId: tr.address ? tr.address.id : null,
+      addressText: tr.addressText,
+      status: CAN_SERVE[tr.type].length ? "waiting" : "closed",
+      unit: -1,
+      calls: [rec],
+      phones: input.phone ? [input.phone] : [],
+      triage: tr,
+      blocked: []
+    };
+    this.incidents.push(inc);
+    return { incident: inc, merged: false, triage: tr };
+  }
+  /** Incidents with a location that still need a unit. */
+  waiting() {
+    return this.incidents.filter((c) => c.status === "waiting" && c.node >= 0);
+  }
+  /** The copilot's recommended assignments right now. Nothing is dispatched until a dispatcher accepts. */
+  recommend(withRoutes = true) {
+    const now = this.now();
+    const free = this.units.filter((u) => u.status === "available");
+    const picks = planAssignments(
+      free.map((u) => ({ id: u.id, kind: u.kind, vehicle: u.vehicle, node: u.node })),
+      this.waiting(),
+      now,
+      { flood: this.flood, timesTo: (n, v, t) => this.timesTo(n, v, t), blocked: (c, v) => this.incidents[c].blocked.includes(v) }
+    );
+    return picks.sort((a, b) => b.gain - a.gain).map((p) => {
+      const u = this.units[p.unit];
+      const c = this.incidents[p.incident];
+      let route = null;
+      if (withRoutes) {
+        const s = this.router.search(c.node, u.vehicle, now, p.minutes + 1);
+        route = this.router.route(s, u.node)?.pts ?? null;
+      }
+      return { ...p, unitName: u.name, label: `${TYPE_LABEL[c.type]}${c.addressText ? ` at ${c.addressText}` : ""}`, route };
+    });
+  }
+  dispatch(unitId, incidentId) {
+    const u = this.unit(unitId);
+    const c = this.incident(incidentId);
+    if (u.status !== "available") throw new Error(`${u.name} is not available`);
+    if (c.status !== "waiting") throw new Error(`incident ${c.id} is not waiting for a unit`);
+    Object.assign(u, { status: "en_route", incident: c.id, since: this.now() });
+    Object.assign(c, { status: "assigned", unit: u.id });
+  }
+  /** A unit reports its status. Arriving puts it at the scene; clearing frees it there; turning back re-queues the incident. */
+  setUnit(unitId, status2) {
+    const u = this.unit(unitId);
+    const c = u.incident >= 0 ? this.incidents[u.incident] : null;
+    const now = this.now();
+    if (status2 === "turned_back") {
+      if (c) {
+        if (!c.blocked.includes(u.vehicle)) c.blocked.push(u.vehicle);
+        Object.assign(c, { status: "waiting", unit: -1 });
+      }
+      Object.assign(u, { status: "available", incident: -1, since: now });
+      return;
+    }
+    if (status2 === "on_scene" && c) u.node = c.node;
+    if ((status2 === "available" || status2 === "out_of_service") && c) {
+      if (u.status === "on_scene") {
+        u.node = c.node;
+        c.status = "closed";
+      } else Object.assign(c, { status: "waiting", unit: -1 });
+      u.incident = -1;
+    }
+    Object.assign(u, { status: status2, since: now });
+  }
+  close(incidentId) {
+    const c = this.incident(incidentId);
+    if (c.unit >= 0 && this.units[c.unit].incident === c.id) Object.assign(this.units[c.unit], { status: "available", incident: -1, since: this.now() });
+    c.status = "closed";
+  }
+  unit(id) {
+    const u = this.units[id];
+    if (!u) throw new Error(`no unit ${id}`);
+    return u;
+  }
+  incident(id) {
+    const c = this.incidents[id];
+    if (!c) throw new Error(`no incident ${id}`);
+    return c;
+  }
+  /** What the flood will have done by time t: closed roads, wet addresses, cut-off stations, and where to stage boats. */
+  readiness(t, horizon = t) {
+    const { city, flood } = this;
+    const closedKm = { car: 0, highwater: 0, boat: 0 };
+    for (let e = 0; e < city.m; e++) {
+      const km = city.eLen[e] / 1e3;
+      if (!flood.passable(e, "car", t)) closedKm.car += km;
+      if (!flood.passable(e, "highwater", t)) closedKm.highwater += km;
+    }
+    const addresses = { ankle: 0, stall: 0, chest: 0, total: city.addresses.length };
+    const streets = /* @__PURE__ */ new Map();
+    for (const a of city.addresses) {
+      const d = flood.depthAt(a.x, a.y, t);
+      if (d >= 0.15) addresses.ankle++;
+      if (d >= DEPTH_LIMIT.car) addresses.stall++;
+      if (d >= 1.2) addresses.chest++;
+      const at = flood.timeToDepth(a.x, a.y, 1.2, this.now() - 1e-9);
+      if (at <= horizon) {
+        const s = streets.get(a.street);
+        if (!s) streets.set(a.street, { at, count: 1, x: a.x, y: a.y });
+        else {
+          s.count++;
+          if (at < s.at) Object.assign(s, { at, x: a.x, y: a.y });
+        }
+      }
+    }
+    const firstStreets = [...streets].map(([street, s]) => ({ street, ...s })).filter((s) => s.count >= 2).sort((a, b) => a.at - b.at || b.count - a.count).slice(0, 12);
+    const stationsCutOff = [];
+    for (const s of city.stations) {
+      if (s.kind === "hospital") continue;
+      const vehicle = s.kind === "fire" ? "highwater" : "car";
+      let open = false;
+      for (let k = city.adjStart[s.node]; k < city.adjStart[s.node + 1]; k++) if (flood.passable(city.adjEdge[k], vehicle, t)) open = true;
+      if (!open) stationsCutOff.push(s.name);
+    }
+    return { t, closedKm, totalKm: this.totalKm, addresses, stationsCutOff, firstStreets };
+  }
+  /** JSON-safe view of the board for the console and the HTTP API. */
+  snapshot() {
+    return {
+      now: this.now(),
+      epoch: this.epoch,
+      units: this.units,
+      incidents: this.incidents.map(({ triage: _t, ...c }) => c)
+    };
+  }
+};
+
+// src/live/server.ts
+async function refresh(state, fetcher = fetchGauges) {
+  const { center } = state;
+  const report = await fetcher(cityBBox(center.city));
+  state.report = report;
+  applyGauges(state, report.gauges);
+}
+function applyGauges(state, gauges) {
+  const { center } = state;
+  if (state.scenario || !gauges.length) {
+    const s = state.scenario;
+    center.flood.setChannels([scenarioCurve(s?.rise ?? 0, s?.hours ?? 1)], () => 0, (c) => center.city.drain[c] === 2 ? 1 : 0.5);
+    state.source = s ? "scenario" : "none";
+    state.coverage = null;
+  } else {
+    state.coverage = driveFromGauges(center.flood, gauges, center.epoch, state.offset);
+    state.source = "live";
+  }
+  center.floodChanged();
+}
+function status(state) {
+  const r = state.report;
+  return {
+    city: state.center.city.name,
+    bbox: cityBBox(state.center.city),
+    epoch: state.center.epoch,
+    now: state.center.now(),
+    source: state.source,
+    offset: state.offset,
+    scenario: state.scenario,
+    fetchedAt: r?.fetchedAt ?? null,
+    errors: r?.errors ?? [],
+    gauges: (r?.gauges ?? []).map(summarize),
+    coverage: state.coverage
+  };
+}
+function makeState(city, epoch = Date.now()) {
+  const flood = new FloodModel(city, [scenarioCurve(0, 1)]);
+  return { center: new LiveCenter(city, flood, epoch), source: "none", report: null, coverage: null, offset: 0, scenario: null };
+}
+async function handle(state, method, path, query, body) {
+  const c = state.center;
+  const b = body ?? {};
+  const num = (v, name) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) throw new HttpError(400, `${name} must be a number`);
+    return n;
+  };
+  if (method === "GET" && path === "/api/status") return [200, status(state)];
+  if (method === "GET" && path === "/api/gauges") return [200, state.report ?? { gauges: [], fetchedAt: null, errors: ["not fetched yet"] }];
+  if (method === "GET" && path === "/api/readiness") {
+    const hours = query.has("hours") ? num(query.get("hours"), "hours") : 6;
+    const t = c.now() + hours * 60;
+    return [200, { now: c.readiness(c.now(), t), ahead: c.readiness(t) }];
+  }
+  if (method === "GET" && path === "/api/board") return [200, c.snapshot()];
+  if (method === "GET" && path === "/api/recommendations") return [200, c.recommend()];
+  if (method === "POST" && path === "/api/calls") {
+    if (typeof b.text !== "string" || !b.text.trim()) throw new HttpError(400, "text is required");
+    const r = c.call({
+      text: b.text,
+      phone: typeof b.phone === "string" ? b.phone : void 0,
+      lat: b.lat === void 0 ? void 0 : num(b.lat, "lat"),
+      lon: b.lon === void 0 ? void 0 : num(b.lon, "lon"),
+      accuracy: b.accuracy === void 0 ? void 0 : num(b.accuracy, "accuracy")
+    });
+    const { triage: triage2, ...incident } = r.incident;
+    return [r.merged ? 200 : 201, { merged: r.merged, incident, triage: { ...r.triage, address: r.triage.address } }];
+  }
+  if (method === "POST" && path === "/api/dispatch") {
+    c.dispatch(num(b.unit, "unit"), num(b.incident, "incident"));
+    return [200, c.snapshot()];
+  }
+  let m = path.match(/^\/api\/units\/(\d+)$/);
+  if (method === "POST" && m) {
+    const st = String(b.status);
+    if (!["available", "en_route", "on_scene", "out_of_service", "turned_back"].includes(st)) throw new HttpError(400, "unknown status");
+    c.setUnit(Number(m[1]), st);
+    return [200, c.snapshot()];
+  }
+  m = path.match(/^\/api\/incidents\/(\d+)\/close$/);
+  if (method === "POST" && m) {
+    c.close(Number(m[1]));
+    return [200, c.snapshot()];
+  }
+  if (method === "POST" && path === "/api/scenario") {
+    state.offset = b.offset === void 0 ? 0 : num(b.offset, "offset");
+    state.scenario = b.rise === void 0 ? null : { rise: num(b.rise, "rise"), hours: b.hours === void 0 ? 12 : num(b.hours, "hours") };
+    applyGauges(state, state.report?.gauges ?? []);
+    return [200, status(state)];
+  }
+  throw new HttpError(404, "not found");
+}
+var HttpError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+};
+async function serve(city, opts) {
+  const log = opts.log ?? console.log;
+  const state = makeState(city);
+  const html = opts.html ? readFileSync(opts.html, "utf8").replace("<head>", '<head>\n<script>window.SURGE_API = "";</script>') : null;
+  const tick = async () => {
+    try {
+      await refresh(state);
+      const r = state.report;
+      log(`${(/* @__PURE__ */ new Date()).toISOString()} gauges: ${r.gauges.length} live (${r.gauges.filter((g) => g.forecast.length).length} with NOAA forecasts)${r.errors.length ? `; ${r.errors.join("; ")}` : ""}`);
+    } catch (err) {
+      log(`gauge refresh failed: ${err.message}`);
+    }
+  };
+  if (opts.gauges) {
+    state.report = JSON.parse(readFileSync(opts.gauges, "utf8"));
+    applyGauges(state, state.report.gauges);
+    log(`gauges: ${state.report.gauges.length} from snapshot ${opts.gauges} (fetched ${new Date(state.report.fetchedAt).toISOString()})`);
+  } else {
+    await tick();
+    setInterval(tick, (opts.refreshMinutes ?? 10) * 6e4).unref();
+  }
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const send = (code, body, type = "application/json") => {
+      res.writeHead(code, { "content-type": type, "cache-control": "no-store", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" });
+      res.end(type === "application/json" ? JSON.stringify(body) : body);
+    };
+    if (req.method === "OPTIONS") return send(204, "", "text/plain");
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      return html ? send(200, html, "text/html; charset=utf-8") : send(404, { error: "run `npm run build` to create the console" });
+    }
+    try {
+      let body = null;
+      if (req.method === "POST") {
+        const chunks = [];
+        let size = 0;
+        for await (const ch of req) {
+          size += ch.length;
+          if (size > 64 * 1024) throw new HttpError(413, "body too large");
+          chunks.push(ch);
+        }
+        const raw = Buffer.concat(chunks).toString("utf8");
+        try {
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          throw new HttpError(400, "body must be JSON");
+        }
+      }
+      const [code, out] = await handle(state, req.method ?? "GET", url.pathname, url.searchParams, body);
+      send(code, out);
+    } catch (err) {
+      const code = err instanceof HttpError ? err.code : 409;
+      send(code, { error: err.message });
+    }
+  });
+  await new Promise((resolve) => server.listen(opts.port, resolve));
+  log(`Surge live console for ${city.name}: http://localhost:${opts.port}`);
+}
+
 // src/cli.ts
-var HELP = `surge - a 911 dispatch copilot for disaster call surges (Houston, Hurricane Harvey night)
+var HELP = `surge - a 911 dispatch copilot for flood emergencies
 
 usage:
-  surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms
-  surge triage "<what the caller said>"                    triage one call against real Houston addresses
+  surge live [--hours 6] [--save snapshot.json]            live river gauges + NOAA forecasts -> flood outlook for the city right now
+  surge serve [--port 8080] [--gauges snapshot.json]       live console and JSON API for a dispatch center (--gauges replays a saved snapshot offline)
+  surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms (Harvey replay)
+  surge triage "<what the caller said>"                    triage one call against the city's real addresses
   surge calls [--seed 1] [--n 12]                          print sample calls from a scenario
+
+every command takes --city <file.json> (default data/houston.json; build another city with data/build.py)
 `;
 function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? Number(process.argv[i + 1]) : def;
 }
+function sarg(name) {
+  const i = process.argv.indexOf(`--${name}`);
+  return i > 0 ? process.argv[i + 1] : void 0;
+}
 function loadCity() {
+  const given = sarg("city");
+  if (given) return new City(JSON.parse(readFileSync2(given, "utf8")));
   const here = dirname(fileURLToPath(import.meta.url));
   const path = [join(here, "../data/houston.json"), join(here, "../../data/houston.json")].find((p) => {
     try {
-      readFileSync(p, { flag: "r" });
+      readFileSync2(p, { flag: "r" });
       return true;
     } catch {
       return false;
     }
   });
   if (!path) throw new Error("data/houston.json not found; run `npm run data` first");
-  return new City(JSON.parse(readFileSync(path, "utf8")));
+  return new City(JSON.parse(readFileSync2(path, "utf8")));
 }
 function bench() {
   const seeds = arg("seeds", 10);
@@ -1863,8 +2586,44 @@ function ci(a) {
   const sd = Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1));
   return 1.96 * sd / Math.sqrt(a.length);
 }
+async function live() {
+  const city = loadCity();
+  const hours = arg("hours", 6);
+  const state = makeState(city);
+  console.log(`${city.name}: fetching live gauges from USGS and forecasts from NOAA...`);
+  await refresh(state);
+  const save = sarg("save");
+  if (save && state.report) {
+    writeFileSync(save, JSON.stringify(state.report));
+    console.log(`saved the gauge snapshot to ${save} (replay it with: surge serve --gauges ${save})`);
+  }
+  const st = status(state);
+  for (const e of st.errors) console.log(`  ! ${e}`);
+  if (state.source !== "live") return void console.log("No live gauge data reachable; nothing to forecast.");
+  console.log(`
+${st.gauges.length} gauges (${st.gauges.filter((g) => g.forecast).length} with NOAA forecasts):`);
+  for (const g of st.gauges) {
+    const fc = g.forecast ? `  forecast peak ${g.forecast.peakFt.toFixed(1)} ft ${new Date(g.forecast.peakAt).toLocaleString()} (${g.forecast.category})` : "";
+    console.log(`  ${g.name.padEnd(48).slice(0, 48)} ${g.latestFt.toFixed(1).padStart(6)} ft  ${g.trendFt >= 0 ? "+" : ""}${g.trendFt.toFixed(1)} ft/3h  ${g.category}${fc}`);
+  }
+  const c = state.center;
+  for (const [label, t] of [["now", c.now()], [`in ${hours} h`, c.now() + hours * 60]]) {
+    const r = c.readiness(t, c.now() + hours * 60);
+    console.log(`
+${label}: ${r.closedKm.car.toFixed(0)} km of road closed to cars, ${r.closedKm.highwater.toFixed(0)} km to high-water trucks (of ${r.totalKm.toFixed(0)} km)`);
+    console.log(`  ${r.addresses.stall} of ${r.addresses.total} sampled addresses with car-stalling water, ${r.addresses.chest} chest-deep`);
+    if (r.stationsCutOff.length) console.log(`  stations cut off: ${r.stationsCutOff.join(", ")}`);
+    if (label !== "now" && r.firstStreets.length) console.log(`  stage boats near: ${r.firstStreets.slice(0, 6).map((s) => s.street).join(", ")}`);
+  }
+}
 var cmd = process.argv[2];
-if (cmd === "bench") bench();
+if (cmd === "live") void live();
+else if (cmd === "serve") {
+  const given = sarg("city");
+  const page = given && !given.endsWith("houston.json") ? `surge-${basename(given, ".json")}.html` : "surge.html";
+  const html = sarg("html") ?? join(dirname(fileURLToPath(import.meta.url)), page);
+  void serve(loadCity(), { port: arg("port", 8080), html, gauges: sarg("gauges") });
+} else if (cmd === "bench") bench();
 else if (cmd === "triage") triage();
 else if (cmd === "calls") calls();
 else console.log(HELP);

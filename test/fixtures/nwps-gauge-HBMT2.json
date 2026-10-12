@@ -1,0 +1,26 @@
+{
+ "lid": "HBMT2",
+ "name": "Brays Bayou at Houston",
+ "usgsId": "08075000",
+ "flood": {
+  "stageUnits": "ft",
+  "categories": {
+   "major": {
+    "stage": 51,
+    "flow": -9999
+   },
+   "moderate": {
+    "stage": 46,
+    "flow": -9999
+   },
+   "minor": {
+    "stage": 41,
+    "flow": -9999
+   },
+   "action": {
+    "stage": 36,
+    "flow": -9999
+   }
+  }
+ }
+}

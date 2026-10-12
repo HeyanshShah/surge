@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { City, type CityData } from './city';
 import { cadPolicy, cadRoutedPolicy, fifoPolicy, surgePolicy } from './dispatch';
@@ -9,13 +9,18 @@ import { makeScenario } from './scenario';
 import { type Metrics, type Policy, Sim, defaultFleet } from './sim';
 import { Triager } from './triage';
 import { TYPE_LABEL } from './types';
+import { makeState, refresh, serve, status } from './live/server';
 
-const HELP = `surge - a 911 dispatch copilot for disaster call surges (Houston, Hurricane Harvey night)
+const HELP = `surge - a 911 dispatch copilot for flood emergencies
 
 usage:
-  surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms
-  surge triage "<what the caller said>"                    triage one call against real Houston addresses
+  surge live [--hours 6] [--save snapshot.json]            live river gauges + NOAA forecasts -> flood outlook for the city right now
+  surge serve [--port 8080] [--gauges snapshot.json]       live console and JSON API for a dispatch center (--gauges replays a saved snapshot offline)
+  surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms (Harvey replay)
+  surge triage "<what the caller said>"                    triage one call against the city's real addresses
   surge calls [--seed 1] [--n 12]                          print sample calls from a scenario
+
+every command takes --city <file.json> (default data/houston.json; build another city with data/build.py)
 `;
 
 function arg(name: string, def: number): number {
@@ -23,7 +28,14 @@ function arg(name: string, def: number): number {
   return i > 0 ? Number(process.argv[i + 1]) : def;
 }
 
+function sarg(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i > 0 ? process.argv[i + 1] : undefined;
+}
+
 function loadCity(): City {
+  const given = sarg('city');
+  if (given) return new City(JSON.parse(readFileSync(given, 'utf8')) as CityData);
   const here = dirname(fileURLToPath(import.meta.url));
   const path = [join(here, '../data/houston.json'), join(here, '../../data/houston.json')].find((p) => {
     try {
@@ -160,8 +172,43 @@ function ci(a: number[]): number {
   return (1.96 * sd) / Math.sqrt(a.length);
 }
 
+async function live(): Promise<void> {
+  const city = loadCity();
+  const hours = arg('hours', 6);
+  const state = makeState(city);
+  console.log(`${city.name}: fetching live gauges from USGS and forecasts from NOAA...`);
+  await refresh(state);
+  const save = sarg('save');
+  if (save && state.report) {
+    writeFileSync(save, JSON.stringify(state.report));
+    console.log(`saved the gauge snapshot to ${save} (replay it with: surge serve --gauges ${save})`);
+  }
+  const st = status(state);
+  for (const e of st.errors) console.log(`  ! ${e}`);
+  if (state.source !== 'live') return void console.log('No live gauge data reachable; nothing to forecast.');
+  console.log(`\n${st.gauges.length} gauges (${st.gauges.filter((g) => g.forecast).length} with NOAA forecasts):`);
+  for (const g of st.gauges) {
+    const fc = g.forecast ? `  forecast peak ${g.forecast.peakFt.toFixed(1)} ft ${new Date(g.forecast.peakAt).toLocaleString()} (${g.forecast.category})` : '';
+    console.log(`  ${g.name.padEnd(48).slice(0, 48)} ${g.latestFt.toFixed(1).padStart(6)} ft  ${g.trendFt >= 0 ? '+' : ''}${g.trendFt.toFixed(1)} ft/3h  ${g.category}${fc}`);
+  }
+  const c = state.center;
+  for (const [label, t] of [['now', c.now()], [`in ${hours} h`, c.now() + hours * 60]] as const) {
+    const r = c.readiness(t, c.now() + hours * 60);
+    console.log(`\n${label}: ${r.closedKm.car.toFixed(0)} km of road closed to cars, ${r.closedKm.highwater.toFixed(0)} km to high-water trucks (of ${r.totalKm.toFixed(0)} km)`);
+    console.log(`  ${r.addresses.stall} of ${r.addresses.total} sampled addresses with car-stalling water, ${r.addresses.chest} chest-deep`);
+    if (r.stationsCutOff.length) console.log(`  stations cut off: ${r.stationsCutOff.join(', ')}`);
+    if (label !== 'now' && r.firstStreets.length) console.log(`  stage boats near: ${r.firstStreets.slice(0, 6).map((s) => s.street).join(', ')}`);
+  }
+}
+
 const cmd = process.argv[2];
-if (cmd === 'bench') bench();
+if (cmd === 'live') void live();
+else if (cmd === 'serve') {
+  const given = sarg('city');
+  const page = given && !given.endsWith('houston.json') ? `surge-${basename(given, '.json')}.html` : 'surge.html';
+  const html = sarg('html') ?? join(dirname(fileURLToPath(import.meta.url)), page);
+  void serve(loadCity(), { port: arg('port', 8080), html, gauges: sarg('gauges') });
+} else if (cmd === 'bench') bench();
 else if (cmd === 'triage') triage();
 else if (cmd === 'calls') calls();
 else console.log(HELP);

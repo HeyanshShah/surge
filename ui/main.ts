@@ -4,9 +4,10 @@ import type { PolicyReplay, Replay, ReplayCad, ReplayLeg } from '../src/replay';
 import { Router, along } from '../src/routing';
 import { type Triage, Triager } from '../src/triage';
 import { CAN_SERVE, TYPE_LABEL, type IncidentType } from '../src/types';
+import { LiveView } from './live';
 
 declare const __CITY__: string;
-declare const __REPLAY__: Replay;
+declare const __REPLAY__: Replay | null;
 declare const __BENCH__: Bench | null;
 declare const __WORKER_SRC__: string;
 // referenced once each so the bundler inlines the big blobs a single time
@@ -41,10 +42,27 @@ const EXAMPLES: [string, string][] = [
 ];
 
 let city: City;
+let examples: [string, string][] = EXAMPLES;
+
+/** Name the console after the city it was built for, and give the example calls real addresses there. */
+function personalize(): void {
+  const short = city.name.replace(/\s*\(.*\)$/, '');
+  $('sub').textContent = replay ? `911 dispatch copilot · ${short} · Hurricane Harvey replay and live gauges` : `911 dispatch copilot · ${short} · live river gauges`;
+  $('takelabel').textContent = `Type what a caller says. The copilot triages it against ${city.addresses.length.toLocaleString()} real ${short} addresses.`;
+  if (/^Houston/.test(city.name)) return;
+  const pick = (k: number) => {
+    const a = city.addresses[(k * 7919) % city.addresses.length];
+    return `${a.number} ${a.street.toLowerCase()}`;
+  };
+  examples = EXAMPLES.map(([l, t], i) => [l, t.replace(/\d{3,5} [a-z .]+?(?=,|$)/, pick(i + 1))]);
+  ($('calltext') as HTMLTextAreaElement).value = examples[0][1];
+}
 let flood: FloodModel;
 let router: Router;
 let triager: Triager;
-let replay: Replay = __REPLAY__;
+let replay: Replay = __REPLAY__ as Replay;
+let mode: 'replay' | 'live' = __REPLAY__ ? 'replay' : 'live';
+let live: LiveView;
 let pol: 'surge' | 'cad' = 'surge';
 let T = 0;
 let playing = false;
@@ -61,13 +79,24 @@ function boot(): void {
   flood = new FloodModel(city);
   router = new Router(city, flood);
   triager = new Triager(city);
+  live = new LiveView({ city, $, esc, highlight, focusOn, sx, sy });
+  live.showTab = (k, focus) => {
+    setTab(k);
+    if (focus !== undefined) live.renderDispatch(focus);
+  };
+  personalize();
   buildPaths();
   fit();
   wire();
-  indexReplay();
   renderAbout();
   $('loading').hidden = true;
-  setTime(150);
+  if (replay) {
+    indexReplay();
+    setTime(150);
+  } else {
+    $('modebox').hidden = true;
+    setMode('live');
+  }
   requestAnimationFrame(frame);
 }
 
@@ -202,10 +231,10 @@ function drawBase(): void {
 
 // flood overlay: one pixel per 75 m terrain cell, redrawn when the water moves
 const floodCv = document.createElement('canvas');
-let floodStage = -1;
-function updateFlood(stage: number): void {
-  if (Math.abs(stage - floodStage) < 0.01) return;
-  floodStage = stage;
+let floodKey = '';
+function updateFlood(key: string, depthOf: (c: number) => number): void {
+  if (key === floodKey) return;
+  floodKey = key;
   const { w, h } = city.grid;
   floodCv.width = w;
   floodCv.height = h;
@@ -213,7 +242,7 @@ function updateFlood(stage: number): void {
   const img = fc.createImageData(w, h);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
-      const d = flood.depth(j * w + i, stage);
+      const d = depthOf(j * w + i);
       if (d < 0.05) continue;
       const o = ((h - 1 - j) * w + i) * 4;
       const f = Math.min(1, d / 2.5);
@@ -261,7 +290,7 @@ function cadState(c: ReplayCad, t: number): CadState {
 // ------------------------------------------------------------------ drawing
 
 function frame(now: number): void {
-  if (playing) {
+  if (playing && mode === 'replay') {
     const dt = Math.min(0.1, (now - (lastFrame || now)) / 1000);
     setTime(Math.min(replay.minutes, T + dt * speed), true);
     if (T >= replay.minutes) setPlaying(false);
@@ -278,15 +307,20 @@ function draw(now: number): void {
   ctx.drawImage(base, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   // floodwater
-  updateFlood(flood.stage(T));
+  if (mode === 'live') updateFlood(live.floodKey(), (c) => live.depthCell(c));
+  else {
+    const st = flood.stage(T);
+    updateFlood(`replay|${Math.round(st * 100)}`, (c) => flood.depth(c, st));
+  }
   const [x0, y0] = [city.grid.x0, city.grid.y0];
   const gw = city.grid.w * city.grid.cell;
   const gh = city.grid.h * city.grid.cell;
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(floodCv, sx(x0), sy(y0 + gh), gw * view.s, gh * view.s);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 260);
+  if (mode === 'live') return live.draw(ctx, view, pulse);
 
   const p = P();
-  const pulse = 0.5 + 0.5 * Math.sin(now / 260);
   const unitXY = p.units.map((u) => unitPos(p, u, T));
 
   // incidents
@@ -676,6 +710,14 @@ function sparkline(cv: HTMLCanvasElement, x: number, y: number): void {
 function runTake(): void {
   const text = ($('calltext') as HTMLTextAreaElement).value.trim();
   if (!text) return;
+  if (mode === 'live') {
+    $('takeout').innerHTML = '<p class="hint">Triaging…</p>';
+    live
+      .take(text, ($('callphone') as HTMLInputElement).value.trim())
+      .then((html) => ($('takeout').innerHTML = html))
+      .catch((err) => ($('takeout').innerHTML = `<p class="hint">Could not log the call: ${esc((err as Error).message)}</p>`));
+    return;
+  }
   const t0 = performance.now();
   const tr = triager.triage(text);
   const ms = performance.now() - t0;
@@ -784,10 +826,34 @@ function setPolicy(k: 'surge' | 'cad'): void {
   hud();
 }
 
-function setTab(k: 'feed' | 'inc' | 'take'): void {
-  for (const t of ['feed', 'inc', 'take']) {
+type Tab = 'feed' | 'inc' | 'take' | 'gauges' | 'dispatch';
+function setTab(k: Tab): void {
+  for (const t of ['feed', 'inc', 'take', 'gauges', 'dispatch']) {
     $(`tab-${t}`).classList.toggle('on', t === k);
     $(`pane-${t}`).hidden = t !== k;
+  }
+}
+
+function setMode(m: 'replay' | 'live'): void {
+  mode = m;
+  $('app').classList.toggle('live', m === 'live');
+  $('mode-replay').classList.toggle('on', m === 'replay');
+  $('mode-live').classList.toggle('on', m === 'live');
+  $('mode-replay').setAttribute('aria-selected', String(m === 'replay'));
+  $('mode-live').setAttribute('aria-selected', String(m === 'live'));
+  $('glabel').textContent = m === 'live' ? 'Highest rise' : 'Bayou rise';
+  $('triage').textContent = m === 'live' ? 'Log this call' : 'Triage this call';
+  $('takeout').innerHTML = '';
+  take = null;
+  floodKey = '';
+  if (m === 'live') {
+    setPlaying(false);
+    setTab('gauges');
+    live.hud();
+    void live.start();
+  } else {
+    setTab('feed');
+    hud();
   }
 }
 
@@ -800,8 +866,10 @@ function selectCad(id: number): void {
 function wire(): void {
   window.addEventListener('resize', () => {
     resize();
+    if (!replay) return;
     drawTimelineBase();
-    hud();
+    if (mode === 'replay') hud();
+    else live.hud();
   });
   $('play').onclick = () => setPlaying(!playing);
   $('speed').onchange = (e) => (speed = Number((e.target as HTMLSelectElement).value));
@@ -814,12 +882,49 @@ function wire(): void {
     renderIncident();
   };
   $('tab-take').onclick = () => setTab('take');
+  $('tab-gauges').onclick = () => setTab('gauges');
+  $('tab-dispatch').onclick = () => setTab('dispatch');
+  $('mode-replay').onclick = () => setMode('replay');
+  $('mode-live').onclick = () => setMode('live');
+  $('lv-scrub').oninput = (e) => {
+    live.ahead = Number((e.target as HTMLInputElement).value);
+    live.hud();
+  };
+  $('lv-whatif').onchange = (e) => {
+    live.offset = Number((e.target as HTMLSelectElement).value);
+    live.apply();
+  };
+  const scen = () => {
+    live.scenario = { rise: Number(($('lv-rise') as HTMLSelectElement).value), hours: Number(($('lv-hours') as HTMLSelectElement).value) };
+    live.apply();
+  };
+  $('lv-rise').onchange = scen;
+  $('lv-hours').onchange = scen;
+  for (const id of ['lv-dispatch', 'takeout'])
+    $(id).addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (b && mode === 'live') void live.act(b).then(() => setTab('dispatch'));
+    });
+  $('lv-dispatch').addEventListener('click', (e) => {
+    const li = (e.target as HTMLElement).closest('li[data-inc]') as HTMLElement | null;
+    if (!li || (e.target as HTMLElement).closest('button')) return;
+    const c = live.boardView.incidents[Number(li.dataset.inc)];
+    if (c && Number.isFinite(c.x)) focusOn(c.x, c.y);
+  });
+  $('lv-gauges').addEventListener('click', (e) => {
+    const li = (e.target as HTMLElement).closest('li[data-gauge]') as HTMLElement | null;
+    const g = li && live.gauges.find((x) => x.id === li.dataset.gauge);
+    if (g) {
+      const [x, y] = [(g.lon - city.origin[0]) * city.scale[0], (g.lat - city.origin[1]) * city.scale[1]];
+      focusOn(x, y);
+    }
+  });
   $('triage').onclick = runTake;
-  $('examples').innerHTML = EXAMPLES.map(([l], i) => `<button data-i="${i}">${l}</button>`).join('');
+  $('examples').innerHTML = examples.map(([l], i) => `<button data-i="${i}">${l}</button>`).join('');
   $('examples').onclick = (e) => {
     const b = (e.target as HTMLElement).closest('button');
     if (!b) return;
-    ($('calltext') as HTMLTextAreaElement).value = EXAMPLES[Number(b.dataset.i)][1];
+    ($('calltext') as HTMLTextAreaElement).value = examples[Number(b.dataset.i)][1];
     runTake();
   };
   $('feed').onclick = (e) => {
@@ -884,7 +989,7 @@ function wire(): void {
     { passive: false },
   );
   document.addEventListener('keydown', (e) => {
-    if ((e.target as HTMLElement).tagName === 'TEXTAREA') return;
+    if ((e.target as HTMLElement).tagName === 'TEXTAREA' || (e.target as HTMLElement).tagName === 'INPUT' || mode === 'live') return;
     if (e.code === 'Space') {
       e.preventDefault();
       setPlaying(!playing);
@@ -902,6 +1007,7 @@ function zoom(f: number, px: number, py: number): void {
 }
 
 function tap(px: number, py: number): void {
+  if (mode === 'live') return void live.tap(px, py);
   const p = P();
   let best = -1;
   let bd = 16 * 16;
@@ -952,6 +1058,10 @@ function renderAbout(): void {
     .map((s) => `<li>${esc(s)}</li>`)
     .join('');
   const b = __BENCH__;
+  if (!replay) {
+    $('benchsec').hidden = true;
+    return;
+  }
   if (!b) {
     $('bench').innerHTML = '<tr><td>Run <code>npm run bench</code> to fill this table.</td></tr>';
     return;

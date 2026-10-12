@@ -176,3 +176,30 @@ tr.me td { color: var(--amber); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {
   .gfill { transition: none; }
 }
+
+/* live mode */
+.app.live .replay-only, .app:not(.live) .live-only { display: none !important; }
+.mode .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--a1); margin-right: 6px; vertical-align: 1px; }
+.mode button.on .dot { box-shadow: 0 0 0 3px #ff5a4e44; animation: blink 1.6s infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+.sw.closed { background: var(--a1); }
+.sw.boats { background: none; border: 1.5px dashed var(--teal); height: 8px; width: 8px; border-radius: 50%; }
+.lg { width: 9px; height: 9px; border: 2px solid var(--ok); background: #070c18; display: inline-block; box-sizing: border-box; }
+.app.live .kc { font-size: 13px; font-family: var(--mono); }
+.lvlabel { display: grid; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; min-width: 108px; }
+.lvlabel b { font: 600 20px/1.1 var(--display); color: var(--text); letter-spacing: 0.02em; text-transform: none; }
+.lvtl { height: 40px; display: grid; align-content: center; }
+.lvtl input { position: static; opacity: 1; width: 100%; accent-color: var(--amber); }
+.ticks { display: flex; justify-content: space-between; font: 500 10px var(--mono); color: var(--muted); }
+.gline { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 13px; }
+.gline b { font: 600 18px var(--display); }
+.gauge-row { cursor: default; }
+.flash { outline: 2px solid var(--amber); }
+.blabel { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; margin: 6px 0; }
+.lvd .feed { margin-bottom: 12px; }
+.rec { background: var(--panel-2); border-radius: 8px; padding: 9px 10px; border-left: 3px solid var(--amber); display: grid; gap: 4px; }
+.primary.small, .ghost.small { width: auto; padding: 5px 10px; font-size: 12px; justify-self: start; }
+.btnrow { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.phone { width: 100%; box-sizing: border-box; margin-top: 6px; background: #0c1427; border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; }
+.card .big .chip { vertical-align: 3px; }
+@media (prefers-reduced-motion: reduce) { .mode button.on .dot { animation: none; } }

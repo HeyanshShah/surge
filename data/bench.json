@@ -44,29 +44,29 @@
   },
   {
    "policy": "Surge, no flood forecast",
-   "deaths": 65.65330955044463,
-   "ci": 4.587449045493014,
-   "reached": 315.85,
-   "p1Median": 37.735462264394656,
-   "p1P90": 115.32237324938981,
-   "p1Unreached": 66.1,
-   "turnedBack": 2.95,
-   "wasted": 16.85,
-   "repeat": 518.4,
-   "abandoned": 428.55
+   "deaths": 65.80089835654567,
+   "ci": 4.506185258411778,
+   "reached": 315.25,
+   "p1Median": 37.633141755240274,
+   "p1P90": 115.30764351861833,
+   "p1Unreached": 66.7,
+   "turnedBack": 3.3,
+   "wasted": 16.95,
+   "repeat": 518.15,
+   "abandoned": 427.55
   },
   {
    "policy": "Surge copilot",
-   "deaths": 55.69524675142145,
-   "ci": 4.36775408819167,
+   "deaths": 55.685252379168766,
+   "ci": 4.369871027220884,
    "reached": 322.1,
-   "p1Median": 24.118859306236715,
-   "p1P90": 74.31827713951414,
+   "p1Median": 24.10228135239719,
+   "p1P90": 74.51948429700171,
    "p1Unreached": 56.05,
    "turnedBack": 2.75,
-   "wasted": 14.15,
+   "wasted": 14.1,
    "repeat": 361.45,
-   "abandoned": 182.55
+   "abandoned": 182.4
   }
  ]
 }

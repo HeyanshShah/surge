@@ -1,0 +1,464 @@
+{
+ "name": "ns1:timeSeriesResponseType",
+ "declaredType": "org.cuahsi.waterml.TimeSeriesResponseType",
+ "scope": "javax.xml.bind.JAXBElement$GlobalScope",
+ "value": {
+  "queryInfo": {},
+  "timeSeries": [
+   {
+    "name": "USGS:08074000:00065:00000",
+    "sourceInfo": {
+     "siteName": "BUFFALO BAYOU AT HOUSTON, TX",
+     "siteCode": [
+      {
+       "value": "08074000",
+       "network": "NWIS",
+       "agencyCode": "USGS"
+      }
+     ],
+     "timeZoneInfo": {
+      "defaultTimeZone": {
+       "zoneOffset": "-06:00",
+       "zoneAbbreviation": "CST"
+      },
+      "daylightSavingsTimeZone": {
+       "zoneOffset": "-05:00",
+       "zoneAbbreviation": "CDT"
+      },
+      "siteUsesDaylightSavingsTime": true
+     },
+     "geoLocation": {
+      "geogLocation": {
+       "srs": "EPSG:4326",
+       "latitude": 29.76022829,
+       "longitude": -95.4085505
+      },
+      "localSiteXY": []
+     }
+    },
+    "variable": {
+     "variableCode": [
+      {
+       "value": "00065",
+       "network": "NWIS",
+       "vocabulary": "NWIS:UnitValues",
+       "default": true
+      }
+     ],
+     "variableName": "Gage height, ft",
+     "unit": {
+      "unitCode": "ft"
+     },
+     "noDataValue": -999999.0
+    },
+    "values": [
+     {
+      "value": [
+       {
+        "value": "7.01",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T19:30:00.000-05:00"
+       },
+       {
+        "value": "6.99",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T20:30:00.000-05:00"
+       },
+       {
+        "value": "6.97",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T21:30:00.000-05:00"
+       },
+       {
+        "value": "6.95",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T22:30:00.000-05:00"
+       },
+       {
+        "value": "6.93",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T23:30:00.000-05:00"
+       },
+       {
+        "value": "6.91",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T00:30:00.000-05:00"
+       },
+       {
+        "value": "6.89",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T01:30:00.000-05:00"
+       },
+       {
+        "value": "6.87",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T02:30:00.000-05:00"
+       },
+       {
+        "value": "6.85",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T03:30:00.000-05:00"
+       },
+       {
+        "value": "6.83",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T04:30:00.000-05:00"
+       },
+       {
+        "value": "6.81",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T05:30:00.000-05:00"
+       },
+       {
+        "value": "6.79",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T06:30:00.000-05:00"
+       },
+       {
+        "value": "6.77",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T07:30:00.000-05:00"
+       },
+       {
+        "value": "6.75",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T08:30:00.000-05:00"
+       },
+       {
+        "value": "6.73",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T09:30:00.000-05:00"
+       },
+       {
+        "value": "6.71",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T10:30:00.000-05:00"
+       },
+       {
+        "value": "6.69",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T11:30:00.000-05:00"
+       },
+       {
+        "value": "6.67",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T12:30:00.000-05:00"
+       },
+       {
+        "value": "6.65",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T13:30:00.000-05:00"
+       },
+       {
+        "value": "6.63",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T14:30:00.000-05:00"
+       },
+       {
+        "value": "6.61",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T15:30:00.000-05:00"
+       },
+       {
+        "value": "6.59",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T16:30:00.000-05:00"
+       },
+       {
+        "value": "6.57",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T17:30:00.000-05:00"
+       },
+       {
+        "value": "-999999",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T18:30:00.000-05:00"
+       }
+      ],
+      "method": [
+       {
+        "methodDescription": "[Primary Sensor]",
+        "methodID": 140430
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "name": "USGS:08075000:00065:00000",
+    "sourceInfo": {
+     "siteName": "BRAYS BAYOU AT HOUSTON, TX",
+     "siteCode": [
+      {
+       "value": "08075000",
+       "network": "NWIS",
+       "agencyCode": "USGS"
+      }
+     ],
+     "timeZoneInfo": {
+      "defaultTimeZone": {
+       "zoneOffset": "-06:00",
+       "zoneAbbreviation": "CST"
+      },
+      "daylightSavingsTimeZone": {
+       "zoneOffset": "-05:00",
+       "zoneAbbreviation": "CDT"
+      },
+      "siteUsesDaylightSavingsTime": true
+     },
+     "geoLocation": {
+      "geogLocation": {
+       "srs": "EPSG:4326",
+       "latitude": 29.69717,
+       "longitude": -95.41216
+      },
+      "localSiteXY": []
+     }
+    },
+    "variable": {
+     "variableCode": [
+      {
+       "value": "00065",
+       "network": "NWIS",
+       "vocabulary": "NWIS:UnitValues",
+       "default": true
+      }
+     ],
+     "variableName": "Gage height, ft",
+     "unit": {
+      "unitCode": "ft"
+     },
+     "noDataValue": -999999.0
+    },
+    "values": [
+     {
+      "value": [
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T19:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T20:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T21:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T22:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-10T23:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T00:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T01:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T02:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T03:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T04:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T05:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T06:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T07:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T08:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T09:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T10:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T11:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T12:30:00.000-05:00"
+       },
+       {
+        "value": "4.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T13:30:00.000-05:00"
+       },
+       {
+        "value": "4.70",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T14:30:00.000-05:00"
+       },
+       {
+        "value": "5.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T15:30:00.000-05:00"
+       },
+       {
+        "value": "5.70",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T16:30:00.000-05:00"
+       },
+       {
+        "value": "6.20",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T17:30:00.000-05:00"
+       },
+       {
+        "value": "6.70",
+        "qualifiers": [
+         "P"
+        ],
+        "dateTime": "2026-10-11T18:30:00.000-05:00"
+       }
+      ],
+      "method": [
+       {
+        "methodDescription": "[Primary Sensor]",
+        "methodID": 140430
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}
