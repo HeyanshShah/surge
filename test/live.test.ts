@@ -147,3 +147,38 @@ describe('live dispatch center', () => {
     await expect(handle(state, 'POST', '/api/calls', q, {})).rejects.toThrow(/text/);
   });
 });
+
+describe('running it for real', () => {
+  it('journals every change and replays it after a restart, with an audit of copilot overrides', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { openJournal } = await import('../src/live/server');
+    const dir = mkdtempSync(join(tmpdir(), 'surge-'));
+    const q = new URLSearchParams();
+    const a = await openJournal(city, dir);
+    await handle(a, 'POST', '/api/scenario', q, { rise: 4, hours: 6 }, { by: 'sam' });
+    const [, r] = await handle(a, 'POST', '/api/calls', q, { text: "we're on the roof, water up to the gutters, 5607 pardee street", phone: '1' }, { by: 'sam' });
+    const inc = (r as { incident: { id: number } }).incident.id;
+    const [, recs] = await handle(a, 'GET', '/api/recommendations', q, null);
+    const pick = (recs as { unit: number; incident: number }[]).find((x) => x.incident === inc)!;
+    const other = a.center.units.find((u) => u.status === 'available' && u.id !== pick.unit && u.kind === 'engine')!;
+    await handle(a, 'POST', '/api/dispatch', q, { unit: other.id, incident: inc }, { by: 'ana' });
+    const [, audit] = await handle(a, 'GET', '/api/audit', q, null);
+    expect(audit).toMatchObject({ dispatches: 1, followedCopilot: 0 });
+    expect((audit as { overrides: { by: string }[] }).overrides[0].by).toBe('ana');
+
+    // a restart: a new board from the same folder ends up where the old one was
+    const b = await openJournal(city, dir);
+    expect(b.center.epoch).toBe(a.center.epoch);
+    expect(b.scenario).toEqual({ rise: 4, hours: 6 });
+    expect(b.center.incidents[inc].status).toBe('assigned');
+    expect(b.center.units[other.id].status).toBe('en_route');
+    expect(b.events.length).toBe(a.events.length);
+  });
+
+  it('refuses to serve on the network without dispatcher tokens', async () => {
+    const { serve } = await import('../src/live/server');
+    await expect(serve(city, { port: 0, host: '0.0.0.0', log: () => {} })).rejects.toThrow(/tokens/);
+  });
+});

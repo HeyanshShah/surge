@@ -79,6 +79,30 @@ node dist/cli.js serve --gauges snapshot.json    # rehearse on a saved snapshot,
 | `POST /api/units/:id` | `{status: on_scene \| available \| out_of_service \| turned_back}` |
 | `POST /api/scenario` | `{offset}` raises every gauge, `{rise, hours}` plans with no live data |
 
+### Running it for a dispatch center
+
+```bash
+SURGE_TOKENS="ana:$(openssl rand -hex 16),sam:$(openssl rand -hex 16)" \
+  node dist/cli.js serve --host 0.0.0.0 --port 8080 --data /var/lib/surge
+# or: docker build -t surge . && docker run -p 8080:8080 -v surge-data:/data -e SURGE_TOKENS=... surge
+```
+
+- **Nothing is lost on a restart.** With `--data`, every change to the board is appended to `events.jsonl` before it is acknowledged and replayed in order on startup.
+- **Every dispatcher signs in.** Off localhost the server refuses to start without tokens. Each dispatcher opens `/?token=…` once, and the token becomes an HttpOnly cookie. Cross-origin access is off whenever tokens are set.
+- **Every decision is on the record.** `GET /api/audit` lists every change, who made it, and for each dispatch whether it followed the copilot's recommendation, with the overrides listed. This is the data a shadow-mode pilot needs.
+- **Stale data is loud.** If the gauges stop updating for 30 minutes, the console shows a red STALE chip and `/healthz` returns 503 for your monitoring.
+- **What-ifs are private.** A dispatcher's "what if +1 m" changes their screen only; the shared board keeps planning on the real forecast.
+
+### Before real dispatchers use it
+
+Code cannot supply these, and a 911 center will ask for all of them:
+
+1. **A partner agency and a shadow-mode pilot.** Surge recommends while dispatchers work as usual, and the audit log compares its picks with theirs over a real storm season.
+2. **Validation against real outcomes.** The risk model should be fitted to after-action data, such as Harvey rescue records, not only to the simulator.
+3. **Integration with the center's CAD and call-handling system.** The JSON API is the hook, but each vendor has its own interface.
+4. **Security review.** Criminal Justice Information Services (CJIS) rules apply to systems handling 911 data; the token scheme here is a start, not compliance.
+5. **Speech-to-text and Spanish.** Triage reads typed English.
+
 ### Any city
 
 ```bash
@@ -113,7 +137,7 @@ Life-threat response time is from the first call to a unit arriving for trapped 
 
 ```bash
 npm install
-npm test                 # 33 tests: assignment vs brute force, flood physics, routing, triage on unseen calls, simulation, gauge feeds, live dispatch
+npm test                 # 35 tests: assignment vs brute force, flood physics, routing, triage on unseen calls, simulation, gauge feeds, live dispatch, restart and audit
 npm run build            # dist/cli.js and dist/surge.html (precomputes the opening storm)
 node dist/cli.js triage "we're in the attic with my mom she's 79, water is almost to the ceiling, 5607 pardee street"
 node dist/cli.js calls --seed 3 --n 10

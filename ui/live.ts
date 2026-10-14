@@ -118,8 +118,8 @@ export class LiveView {
     }
     this.center.floodChanged();
     this.version++;
-    if (this.remote) void api(window.SURGE_API!, 'POST', '/api/scenario', this.source === 'live' ? { offset: this.offset } : { ...this.scenario }).then(() => this.sync());
-    else void this.sync();
+    // a what-if changes this screen only; the shared board keeps planning on the real forecast
+    void this.sync();
     this.renderGauges();
     this.hud();
   }
@@ -185,6 +185,12 @@ export class LiveView {
       const fc = this.gauges.filter((g) => g.forecast).length;
       src.textContent = `${this.gauges.length} live gauges · ${fc} NOAA forecast${fc === 1 ? '' : 's'} · updated ${new Date(this.report!.fetchedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
       src.className = 'chip go';
+      const newest = Math.max(...this.report!.gauges.map((g) => g.observed[g.observed.length - 1]?.t ?? 0));
+      const age = (Date.now() - Math.min(this.report!.fetchedAt, newest + 90 * 60000)) / 60000;
+      if (age > 30) {
+        src.textContent = `STALE: gauge data is ${Math.round(age)} min old · ${src.textContent}`;
+        src.className = 'chip hot';
+      }
     } else if (this.source === 'scenario') {
       src.textContent = `Planning scenario: bayous +${this.scenario.rise} m over ${this.scenario.hours} h`;
       src.className = 'chip hot';

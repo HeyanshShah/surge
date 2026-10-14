@@ -4,13 +4,16 @@
   "description": "A 911 dispatch copilot for disaster call surges: triages free-text calls, merges duplicate reports, forecasts which callers the floodwater reaches first, and optimally assigns rescue units on a real road network.",
   "type": "module",
   "license": "MIT",
-  "bin": { "surge": "dist/cli.js" },
+  "bin": {
+    "surge": "dist/cli.js"
+  },
   "scripts": {
     "data": "python3 data/build.py",
     "build": "node scripts/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "bench": "node dist/cli.js bench"
+    "bench": "node dist/cli.js bench",
+    "start": "node dist/cli.js serve"
   },
   "devDependencies": {
     "esbuild": "0.24.2",

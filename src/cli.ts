@@ -15,7 +15,10 @@ const HELP = `surge - a 911 dispatch copilot for flood emergencies
 
 usage:
   surge live [--hours 6] [--save snapshot.json]            live river gauges + NOAA forecasts -> flood outlook for the city right now
-  surge serve [--port 8080] [--gauges snapshot.json]       live console and JSON API for a dispatch center (--gauges replays a saved snapshot offline)
+  surge serve [--port 8080] [--data dir] [--host 0.0.0.0 --tokens name:token,...]
+                                                           live console and JSON API for a dispatch center
+                                                           --data keeps a journal so restarts lose nothing; --tokens (or SURGE_TOKENS) is
+                                                           required off localhost; --gauges snapshot.json replays a saved snapshot offline
   surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms (Harvey replay)
   surge triage "<what the caller said>"                    triage one call against the city's real addresses
   surge calls [--seed 1] [--n 12]                          print sample calls from a scenario
@@ -207,7 +210,12 @@ else if (cmd === 'serve') {
   const given = sarg('city');
   const page = given && !given.endsWith('houston.json') ? `surge-${basename(given, '.json')}.html` : 'surge.html';
   const html = sarg('html') ?? join(dirname(fileURLToPath(import.meta.url)), page);
-  void serve(loadCity(), { port: arg('port', 8080), html, gauges: sarg('gauges') });
+  const spec = sarg('tokens') ?? process.env.SURGE_TOKENS;
+  const tokens = spec ? new Map(spec.split(',').map((p) => p.split(':').reverse() as [string, string])) : undefined;
+  serve(loadCity(), { port: arg('port', 8080), html, gauges: sarg('gauges'), host: sarg('host'), data: sarg('data'), tokens }).catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
 } else if (cmd === 'bench') bench();
 else if (cmd === 'triage') triage();
 else if (cmd === 'calls') calls();

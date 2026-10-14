@@ -2,7 +2,7 @@
 
 // src/cli.ts
 import { readFileSync as readFileSync2, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/city.ts
@@ -1638,8 +1638,8 @@ var Sim = class {
     cad.unit = uid;
     cad.assignedAt = t;
     const s = this.router.search(cad.node, u.vehicle, t);
-    const route = this.router.route(s, u.node);
-    if (!route) {
+    const route2 = this.router.route(s, u.node);
+    if (!route2) {
       this.counters.turnedBack++;
       u.legs.push({ t0: t, t1: t + TURN_BACK, kind: "turned_back", cad: cid });
       cad.status = "waiting";
@@ -1648,8 +1648,8 @@ var Sim = class {
       this.events.push({ t: t + TURN_BACK, unit: uid, kind: "free" });
       return;
     }
-    u.legs.push({ t0: t, t1: t + route.total, kind: "drive", cad: cid, route });
-    this.events.push({ t: t + route.total, unit: uid, kind: "arrive" });
+    u.legs.push({ t0: t, t1: t + route2.total, kind: "drive", cad: cid, route: route2 });
+    this.events.push({ t: t + route2.total, unit: uid, kind: "arrive" });
   }
   handle(ev) {
     const u = this.units[ev.unit];
@@ -1797,8 +1797,9 @@ function defaultFleet(city, opts = {}) {
 }
 
 // src/live/server.ts
-import { readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { join } from "node:path";
 
 // src/live/gauges.ts
 var USGS_IV = "https://waterservices.usgs.gov/nwis/iv/";
@@ -2173,12 +2174,12 @@ var LiveCenter = class {
     return picks.sort((a, b) => b.gain - a.gain).map((p) => {
       const u = this.units[p.unit];
       const c = this.incidents[p.incident];
-      let route = null;
+      let route2 = null;
       if (withRoutes) {
         const s = this.router.search(c.node, u.vehicle, now, p.minutes + 1);
-        route = this.router.route(s, u.node)?.pts ?? null;
+        route2 = this.router.route(s, u.node)?.pts ?? null;
       }
-      return { ...p, unitName: u.name, label: `${TYPE_LABEL[c.type]}${c.addressText ? ` at ${c.addressText}` : ""}`, route };
+      return { ...p, unitName: u.name, label: `${TYPE_LABEL[c.type]}${c.addressText ? ` at ${c.addressText}` : ""}`, route: route2 };
     });
   }
   dispatch(unitId, incidentId) {
@@ -2276,6 +2277,7 @@ var LiveCenter = class {
 };
 
 // src/live/server.ts
+var STALE_MINUTES = 30;
 async function refresh(state, fetcher = fetchGauges) {
   const { center } = state;
   const report = await fetcher(cityBBox(center.city));
@@ -2308,14 +2310,65 @@ function status(state) {
     fetchedAt: r?.fetchedAt ?? null,
     errors: r?.errors ?? [],
     gauges: (r?.gauges ?? []).map(summarize),
-    coverage: state.coverage
+    coverage: state.coverage,
+    ...freshness(state)
   };
 }
-function makeState(city, epoch = Date.now()) {
+function makeState(city, epoch = Date.now(), journal = null) {
   const flood = new FloodModel(city, [scenarioCurve(0, 1)]);
-  return { center: new LiveCenter(city, flood, epoch), source: "none", report: null, coverage: null, offset: 0, scenario: null };
+  const state = { center: null, source: "none", report: null, coverage: null, offset: 0, scenario: null, events: [], pinned: null, journal };
+  state.center = new LiveCenter(city, flood, epoch, { clock: () => state.pinned ?? Date.now() });
+  return state;
 }
-async function handle(state, method, path, query, body) {
+async function openJournal(city, dir) {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "events.jsonl");
+  if (!existsSync(path)) {
+    const state2 = makeState(city, Date.now(), path);
+    appendFileSync(path, `${JSON.stringify({ epoch: state2.center.epoch, city: city.name })}
+`);
+    return state2;
+  }
+  const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+  const head = JSON.parse(lines[0]);
+  if (head.city !== city.name) throw new Error(`${path} belongs to ${head.city}, not ${city.name}`);
+  const state = makeState(city, head.epoch, null);
+  for (const line of lines.slice(1)) {
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    state.pinned = ev.at;
+    try {
+      await handle(state, "POST", ev.path, new URLSearchParams(), ev.body, { by: ev.by, replay: true });
+    } catch {
+    }
+    state.events.push(ev);
+  }
+  state.pinned = null;
+  state.journal = path;
+  return state;
+}
+function record(state, ev) {
+  if (state.journal) appendFileSync(state.journal, `${JSON.stringify(ev)}
+`);
+  state.events.push(ev);
+}
+function freshness(state) {
+  const at = state.report?.fetchedAt;
+  if (state.source !== "live" || !at) return { stale: state.source === "none", ageMinutes: null };
+  const newest = Math.max(...state.report.gauges.map((g) => g.observed[g.observed.length - 1]?.t ?? 0));
+  const age = (Date.now() - Math.min(at, newest + 90 * 6e4)) / 6e4;
+  return { stale: age > STALE_MINUTES, ageMinutes: Math.round(age) };
+}
+async function handle(state, method, path, query, body, ctx = { by: "local" }) {
+  const out = await route(state, method, path, query, body, ctx);
+  if (method === "POST" && !ctx.replay) record(state, { at: Date.now(), by: ctx.by, path, body: body ?? {}, ...out[2] });
+  return [out[0], out[1]];
+}
+async function route(state, method, path, query, body, ctx) {
   const c = state.center;
   const b = body ?? {};
   const num = (v, name) => {
@@ -2332,6 +2385,18 @@ async function handle(state, method, path, query, body) {
   }
   if (method === "GET" && path === "/api/board") return [200, c.snapshot()];
   if (method === "GET" && path === "/api/recommendations") return [200, c.recommend()];
+  if (method === "GET" && path === "/api/audit") {
+    const d = state.events.filter((e) => e.path === "/api/dispatch" && e.followed !== void 0);
+    return [
+      200,
+      {
+        dispatches: d.length,
+        followedCopilot: d.filter((e) => e.followed).length,
+        overrides: d.filter((e) => !e.followed).map((e) => ({ at: e.at, by: e.by, ...e.body, recommended: e.recommended })),
+        events: state.events.slice(-500)
+      }
+    ];
+  }
   if (method === "POST" && path === "/api/calls") {
     if (typeof b.text !== "string" || !b.text.trim()) throw new HttpError(400, "text is required");
     const r = c.call({
@@ -2345,8 +2410,11 @@ async function handle(state, method, path, query, body) {
     return [r.merged ? 200 : 201, { merged: r.merged, incident, triage: { ...r.triage, address: r.triage.address } }];
   }
   if (method === "POST" && path === "/api/dispatch") {
-    c.dispatch(num(b.unit, "unit"), num(b.incident, "incident"));
-    return [200, c.snapshot()];
+    const unit = num(b.unit, "unit");
+    const incident = num(b.incident, "incident");
+    const rec = ctx.replay ? null : c.recommend(false).find((r) => r.incident === incident);
+    c.dispatch(unit, incident);
+    return [200, c.snapshot(), ctx.replay ? {} : { followed: rec?.unit === unit, recommended: rec ? rec.unitName : null }];
   }
   let m = path.match(/^\/api\/units\/(\d+)$/);
   if (method === "POST" && m) {
@@ -2376,8 +2444,19 @@ var HttpError = class extends Error {
 };
 async function serve(city, opts) {
   const log = opts.log ?? console.log;
-  const state = makeState(city);
+  const host = opts.host ?? "127.0.0.1";
+  const tokens2 = opts.tokens;
+  if (!tokens2?.size && !/^(127\.|localhost$|::1$)/.test(host)) throw new Error(`refusing to serve on ${host} without --tokens: anyone on the network could dispatch units`);
+  const state = opts.data ? await openJournal(city, opts.data) : makeState(city);
+  if (opts.data) log(`board: ${state.events.length} changes replayed from ${state.journal}`);
   const html = opts.html ? readFileSync(opts.html, "utf8").replace("<head>", '<head>\n<script>window.SURGE_API = "";</script>') : null;
+  const who = (req, url) => {
+    if (!tokens2?.size) return "local";
+    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    const cookie = req.headers.cookie?.match(/(?:^|;\s*)surge_token=([^;]+)/)?.[1];
+    const t = bearer ?? (cookie && decodeURIComponent(cookie)) ?? url.searchParams.get("token") ?? "";
+    return tokens2.get(t) ?? null;
+  };
   const tick = async () => {
     try {
       await refresh(state);
@@ -2397,12 +2476,26 @@ async function serve(city, opts) {
   }
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const send = (code, body, type = "application/json") => {
-      res.writeHead(code, { "content-type": type, "cache-control": "no-store", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" });
+    const send = (code, body, type = "application/json", extra = {}) => {
+      const cors = tokens2?.size ? {} : { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" };
+      res.writeHead(code, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff", ...cors, ...extra });
       res.end(type === "application/json" ? JSON.stringify(body) : body);
     };
     if (req.method === "OPTIONS") return send(204, "", "text/plain");
+    if (req.method === "GET" && url.pathname === "/healthz") {
+      const f = freshness(state);
+      return send(f.stale ? 503 : 200, { ok: !f.stale, source: state.source, gaugeAgeMinutes: f.ageMinutes, events: state.events.length });
+    }
+    const by = who(req, url);
+    if (!by) {
+      if (url.pathname.startsWith("/api/")) return send(401, { error: "unauthorized: send your dispatcher token" });
+      return send(401, '<!doctype html><meta charset="utf-8"><title>Surge</title><body style="font:16px system-ui;background:#0a1020;color:#e7ecf6;padding:40px"><h1>Surge</h1><p>Open this console with the link your supervisor gave you, ending in <code>?token=\u2026</code>.</p>', "text/html; charset=utf-8");
+    }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      if (url.searchParams.has("token")) {
+        const cookie = `surge_token=${encodeURIComponent(url.searchParams.get("token"))}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${14 * 86400}`;
+        return send(302, "", "text/plain", { location: "/", "set-cookie": cookie });
+      }
       return html ? send(200, html, "text/html; charset=utf-8") : send(404, { error: "run `npm run build` to create the console" });
     }
     try {
@@ -2422,15 +2515,15 @@ async function serve(city, opts) {
           throw new HttpError(400, "body must be JSON");
         }
       }
-      const [code, out] = await handle(state, req.method ?? "GET", url.pathname, url.searchParams, body);
+      const [code, out] = await handle(state, req.method ?? "GET", url.pathname, url.searchParams, body, { by });
       send(code, out);
     } catch (err) {
       const code = err instanceof HttpError ? err.code : 409;
       send(code, { error: err.message });
     }
   });
-  await new Promise((resolve) => server.listen(opts.port, resolve));
-  log(`Surge live console for ${city.name}: http://localhost:${opts.port}`);
+  await new Promise((resolve) => server.listen(opts.port, host, resolve));
+  log(`Surge live console for ${city.name}: http://${host}:${opts.port}${tokens2?.size ? ` (${tokens2.size} dispatcher tokens)` : ""}`);
 }
 
 // src/cli.ts
@@ -2438,7 +2531,10 @@ var HELP = `surge - a 911 dispatch copilot for flood emergencies
 
 usage:
   surge live [--hours 6] [--save snapshot.json]            live river gauges + NOAA forecasts -> flood outlook for the city right now
-  surge serve [--port 8080] [--gauges snapshot.json]       live console and JSON API for a dispatch center (--gauges replays a saved snapshot offline)
+  surge serve [--port 8080] [--data dir] [--host 0.0.0.0 --tokens name:token,...]
+                                                           live console and JSON API for a dispatch center
+                                                           --data keeps a journal so restarts lose nothing; --tokens (or SURGE_TOKENS) is
+                                                           required off localhost; --gauges snapshot.json replays a saved snapshot offline
   surge bench [--seeds 10] [--from 101] [--json out.json]  compare dispatch policies over many simulated storms (Harvey replay)
   surge triage "<what the caller said>"                    triage one call against the city's real addresses
   surge calls [--seed 1] [--n 12]                          print sample calls from a scenario
@@ -2457,7 +2553,7 @@ function loadCity() {
   const given = sarg("city");
   if (given) return new City(JSON.parse(readFileSync2(given, "utf8")));
   const here = dirname(fileURLToPath(import.meta.url));
-  const path = [join(here, "../data/houston.json"), join(here, "../../data/houston.json")].find((p) => {
+  const path = [join2(here, "../data/houston.json"), join2(here, "../../data/houston.json")].find((p) => {
     try {
       readFileSync2(p, { flag: "r" });
       return true;
@@ -2621,8 +2717,13 @@ if (cmd === "live") void live();
 else if (cmd === "serve") {
   const given = sarg("city");
   const page = given && !given.endsWith("houston.json") ? `surge-${basename(given, ".json")}.html` : "surge.html";
-  const html = sarg("html") ?? join(dirname(fileURLToPath(import.meta.url)), page);
-  void serve(loadCity(), { port: arg("port", 8080), html, gauges: sarg("gauges") });
+  const html = sarg("html") ?? join2(dirname(fileURLToPath(import.meta.url)), page);
+  const spec = sarg("tokens") ?? process.env.SURGE_TOKENS;
+  const tokens2 = spec ? new Map(spec.split(",").map((p) => p.split(":").reverse())) : void 0;
+  serve(loadCity(), { port: arg("port", 8080), html, gauges: sarg("gauges"), host: sarg("host"), data: sarg("data"), tokens: tokens2 }).catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
 } else if (cmd === "bench") bench();
 else if (cmd === "triage") triage();
 else if (cmd === "calls") calls();
